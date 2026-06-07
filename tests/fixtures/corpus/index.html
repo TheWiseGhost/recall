@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Observability Guide</title>
+    <style>body { color: red; }</style>
+  </head>
+  <body>
+    <h1>Observability</h1>
+    <p>Every request carries a request identifier that is logged at each stage.</p>
+    <script>console.log("should not be extracted");</script>
+    <p>Metrics are scraped by Prometheus every fifteen seconds.</p>
+  </body>
+</html>

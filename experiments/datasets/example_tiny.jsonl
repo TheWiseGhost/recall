@@ -1,0 +1,10 @@
+{"query": "How does authentication work?", "relevant_documents": ["authentication.md"]}
+{"query": "How are bearer tokens verified?", "relevant_documents": ["authentication.md"]}
+{"query": "What happens during a rolling deployment?", "relevant_documents": ["deployment.md"]}
+{"query": "How do I roll back a bad release?", "relevant_documents": ["deployment.md"]}
+{"query": "How often does Prometheus scrape metrics?", "relevant_documents": ["observability.md"]}
+{"query": "What is logged for each request?", "relevant_documents": ["observability.md"]}
+{"query": "Who owns the billing service?", "relevant_documents": ["service.json"]}
+{"query": "What does the billing service depend on?", "relevant_documents": ["service.json"]}
+{"query": "How do internal services authenticate to each other?", "relevant_documents": ["authentication.md"]}
+{"query": "What is the difference between the readiness and liveness probes?", "relevant_documents": ["deployment.md"]}

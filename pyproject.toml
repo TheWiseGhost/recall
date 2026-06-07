@@ -1,0 +1,123 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "recall"
+version = "0.1.0"
+description = "An open-source framework for building, evaluating, and experimenting with knowledge retrieval systems."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "The Recall contributors" }]
+keywords = ["retrieval", "rag", "search", "evaluation", "benchmark", "pgvector"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pgvector>=0.3.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "structlog>=24.1",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Local embedding / reranking models. Pulls in torch, so it is opt-in.
+local = [
+    "sentence-transformers>=3.0",
+]
+openai = [
+    "openai>=1.30",
+]
+pdf = [
+    "pymupdf>=1.24",
+]
+all = [
+    "recall[local,openai,pdf]",
+]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/TheWiseGhost/recall"
+Repository = "https://github.com/TheWiseGhost/recall"
+Documentation = "https://github.com/TheWiseGhost/recall/tree/main/docs"
+
+[project.scripts]
+recall = "recall.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages/recall"]
+
+[tool.hatch.build.targets.sdist]
+include = ["packages/recall", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "TID", # tidy imports
+    "RUF",
+]
+ignore = [
+    "B008", # typer uses function calls in argument defaults by design
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["recall"]
+known-local-folder = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "packages"
+packages = ["recall"]
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "sentence_transformers.*", "fitz", "openai.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a live PostgreSQL+pgvector instance (RECALL_DATABASE_URL)",
+    "slow: downloads models or otherwise takes a long time",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["packages/recall"]

@@ -1,0 +1,7 @@
+Deployment runbook.
+
+Containers are built by the release pipeline and pushed to the registry. A
+rolling deployment replaces one replica at a time and waits for the readiness
+probe before continuing to the next.
+
+Rollback is performed by redeploying the previous image tag.

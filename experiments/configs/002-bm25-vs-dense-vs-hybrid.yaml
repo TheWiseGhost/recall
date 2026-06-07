@@ -1,0 +1,43 @@
+# TODO / FUTURE: this is the target format for `recall experiment`, which is
+# implemented in Milestone 2. Running it today is not supported.
+#
+# Experiment 002 — Is hybrid retrieval worth the complexity?
+
+name: bm25-vs-dense-vs-hybrid
+
+hypothesis: >
+  Hybrid retrieval fusing dense and lexical scores will beat either alone on
+  technical documentation, because exact identifier matches (function names,
+  error codes) are lexical signal that embeddings blur.
+
+dataset:
+  path: ./experiments/datasets/technical_docs.jsonl
+
+chunking:
+  strategy: fixed
+  chunk_size: 512
+  overlap: 64
+
+embedding:
+  provider: sentence_transformers
+  model: BAAI/bge-base-en-v1.5
+
+retrieval:
+  strategies:
+    - bm25
+    - dense
+    - hybrid
+
+hybrid:
+  dense_weight: 0.65
+  lexical_weight: 0.35
+  fusion: rrf
+
+top_k: [5, 10, 20]
+
+metrics:
+  - precision_at_k
+  - recall_at_k
+  - hit_rate_at_k
+  - mrr
+  - ndcg_at_k

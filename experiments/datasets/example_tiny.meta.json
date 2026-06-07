@@ -1,0 +1,9 @@
+{
+  "name": "example_tiny",
+  "kind": "synthetic",
+  "documents": 4,
+  "queries": 10,
+  "corpus": "examples/documents",
+  "label_method": "hand-written by the repository authors against the example corpus",
+  "warning": "SYNTHETIC AND TINY. Ten queries over four documents cannot support any quality claim. It exists so the evaluation harness has something to run against while it is being built."
+}

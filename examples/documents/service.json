@@ -1,0 +1,13 @@
+{
+  "name": "billing-service",
+  "owner": "payments-team",
+  "description": "Handles invoicing, proration and dunning for subscriptions.",
+  "runtime": "python3.12",
+  "dependencies": ["postgres", "redis", "stripe", "auth-service"],
+  "endpoints": [
+    {"path": "/invoices", "method": "GET", "auth": "bearer"},
+    {"path": "/invoices", "method": "POST", "auth": "bearer"},
+    {"path": "/webhooks/stripe", "method": "POST", "auth": "signature"}
+  ],
+  "sla": {"availability": "99.9%", "p99_latency_ms": 400}
+}

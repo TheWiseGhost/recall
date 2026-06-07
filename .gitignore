@@ -1,0 +1,39 @@
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Experiment output is reproducible from configs; results are not committed
+# except for curated example runs, which are added with `git add -f`.
+experiments/results/
+
+# Models and data downloaded at runtime
+.cache/
+*.bin
+*.safetensors
+
+# Local agent/tooling state
+.claude/settings.local.json
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

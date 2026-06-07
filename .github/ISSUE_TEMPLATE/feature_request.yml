@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a capability or a new plugin
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What research or engineering question is currently hard to answer?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Connector
+        - Chunking
+        - Embeddings
+        - Retrieval
+        - Reranking
+        - Context selection
+        - Generation
+        - Evaluation / experiments
+        - Storage
+        - CLI
+        - API / workers
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

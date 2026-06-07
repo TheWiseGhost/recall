@@ -1,0 +1,6 @@
+{
+  "name": "billing-service",
+  "owner": "payments-team",
+  "description": "Handles invoicing, proration and dunning for subscriptions.",
+  "dependencies": ["postgres", "stripe", "auth-service"]
+}
