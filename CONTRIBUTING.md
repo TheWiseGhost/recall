@@ -35,7 +35,9 @@ pytest
 pytest -m integration
 ```
 
-All five must pass. `mypy` runs in strict mode; new code is expected to type-check without `Any` escape hatches unless a third-party stub forces one.
+All five must pass. Invoke `pytest` directly rather than `python -m pytest` —
+the latter injects the working directory into `sys.path`, which can hide a
+real import problem that CI will catch. `mypy` runs in strict mode; new code is expected to type-check without `Any` escape hatches unless a third-party stub forces one.
 
 ## Testing expectations
 

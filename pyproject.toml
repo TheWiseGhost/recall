@@ -113,6 +113,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Tests import shared fakes via `from tests.conftest import ...`. Without this,
+# that only resolves under `python -m pytest` (which injects the cwd) and fails
+# when the `pytest` console script is used, as CI does.
+pythonpath = ["."]
 markers = [
     "integration: requires a live PostgreSQL+pgvector instance (RECALL_DATABASE_URL)",
     "slow: downloads models or otherwise takes a long time",
