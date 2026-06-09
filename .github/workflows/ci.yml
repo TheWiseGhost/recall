@@ -10,9 +10,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PYTHON_VERSION: "3.12"
-
 jobs:
   lint:
     name: Lint and type check
@@ -24,8 +21,14 @@ jobs:
         with:
           enable-cache: true
 
+      # A venv, not `--system`: the runner's system Python is externally
+      # managed and refuses installs. Putting .venv/bin on PATH lets the
+      # later steps call ruff/mypy/pytest directly.
       - name: Install
-        run: uv pip install --system -e ".[dev,pdf]"
+        run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          uv pip install -e ".[dev,pdf]"
 
       - name: ruff check
         run: ruff check --output-format=github .
@@ -67,11 +70,17 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv pip install --system -e ".[dev,pdf]"
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          uv pip install -e ".[dev,pdf]"
 
       - name: Unit tests
         run: pytest tests/unit -v --cov --cov-report=term-missing
 
+      # CI is set by GitHub, which makes the integration fixtures fail loudly
+      # instead of skipping if the database is unreachable.
       - name: Integration tests
         env:
           RECALL_TEST_DATABASE_URL: postgresql+asyncpg://recall:recall@localhost:5432/recall_test
@@ -89,9 +98,7 @@ jobs:
         run: uv build
 
       - name: Check metadata
-        run: |
-          uv pip install --system twine
-          twine check dist/*
+        run: uvx twine check dist/*
 
       - uses: actions/upload-artifact@v4
         with:
