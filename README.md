@@ -11,7 +11,7 @@ Recall is research infrastructure, not a chatbot. It exists to make questions li
 
 Every component in the pipeline — connector, chunker, embedder, retriever, reranker, context selector, generator, evaluator — is selected by name from configuration and implements a small protocol. Swapping one is a config change, and adding one is a class plus a line of registration.
 
-> **Status: v0.1, Milestone 1 (MVP).** Local files and PDFs → fixed-size chunking → embeddings → PostgreSQL/pgvector → dense search → CLI. BM25, hybrid retrieval, reranking and the evaluation harness are the next milestone. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
+> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → fixed-size chunking → embeddings → PostgreSQL/pgvector → dense **and BM25** search → CLI. Hybrid retrieval, reranking, further chunking strategies and the evaluation harness are next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
 
 ---
 
@@ -30,7 +30,7 @@ Every component in the pipeline — connector, chunker, embedder, retriever, rer
         |
    Storage               PostgreSQL + pgvector   (documents, chunks, vectors)
         |
-   Retrieval             dense · BM25¹ · hybrid¹ · metadata filtering
+   Retrieval             dense · BM25 · hybrid¹ · metadata filtering
         |
    Reranking¹            cross-encoder · LLM
         |
@@ -104,7 +104,7 @@ recall migrate               # create/update the database schema
 recall status                # configuration + database health
 recall connectors            # list every registered component
 recall ingest ./docs         # ingest files and PDFs (incremental by default)
-recall search "query"        # search the knowledge base
+recall search "query"        # search the knowledge base (dense or BM25)
 recall documents list        # browse what has been ingested
 recall documents show <id> --chunks
 ```
@@ -115,6 +115,7 @@ Useful flags:
 recall ingest ./docs --force            # re-chunk and re-embed everything
 recall ingest ./docs --no-prune         # keep documents deleted at the source
 recall search "auth" --source-type pdf --top-k 5
+recall search "auth" --strategy bm25    # lexical instead of dense
 recall search "auth" --json             # machine-readable, includes timings
 ```
 
@@ -141,11 +142,28 @@ chunking:
   overlap: 64
 
 retrieval:
-  default: dense
+  default: dense                     # dense | bm25
   top_k: 10
+
+lexical:                             # BM25 parameters
+  k1: 1.2                            # term-frequency saturation
+  b: 0.75                            # length normalisation; 0 disables it
 ```
 
 Any field can be overridden by environment variable: `RECALL_EMBEDDING__PROVIDER=hash`. Configuration is validated on load — a strategy name that is not registered fails at startup, not at the first search.
+
+---
+
+## Retrieval strategies
+
+| Name | Signal | Needs an embedding model |
+|---|---|---|
+| `dense` | cosine similarity over pgvector | yes |
+| `bm25` | Okapi BM25 over PostgreSQL full-text search | no |
+
+`bm25` is **Okapi BM25** — IDF times saturated term frequency with length normalisation — not `ts_rank_cd` under a better name. The difference is not pedantry: `ts_rank_cd` scores how tightly query terms cluster, with no IDF and no length saturation, so it cannot distinguish a match on a rare identifier from a match on a word every document contains. Publishing that comparison as "BM25 vs dense" would be a fabricated finding.
+
+The formula is verified against an independent reference implementation in the integration suite, and `k1`/`b` are configurable. See [docs/architecture/retrieval.md](docs/architecture/retrieval.md).
 
 ---
 
@@ -244,8 +262,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 **Milestone 1 — MVP (done)**
 Filesystem and PDF connectors · fixed-size chunking · pluggable embeddings · PostgreSQL/pgvector storage · dense retrieval · metadata filtering · incremental sync · CLI · Docker · unit and integration tests.
 
-**Milestone 2 — Retrieval research**
-BM25 over PostgreSQL full-text search · hybrid retrieval with configurable weights · reciprocal rank fusion · cross-encoder reranking · sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
+**Milestone 2 — Retrieval research (in progress)**
+✅ BM25 over PostgreSQL full-text search · hybrid retrieval with configurable weights · reciprocal rank fusion · cross-encoder reranking · sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
 
 **Milestone 3 — Production architecture**
 FastAPI service · Redis + Celery workers · job status tracking and dead-lettering · Prometheus metrics and Grafana dashboards · retries with backoff.

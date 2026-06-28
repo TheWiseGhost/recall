@@ -6,11 +6,11 @@ Recall is organised around one rule: **the domain does not know about its infras
 recall/
   core/           domain models + protocols        (no SQLAlchemy, FastAPI, Celery, Typer)
     models.py       Document, Chunk, SearchResult, SearchFilters, SyncResult
-    ports.py        DocumentRepository, ChunkRepository, VectorIndex, IngestStore
+    ports.py        DocumentRepository, ChunkRepository, VectorIndex, LexicalIndex, IngestStore
     registry.py     name -> factory, the plugin seam
     chunking/       Chunker protocol + strategies
     embeddings/     Embedder protocol + providers
-    retrieval/      Retriever protocol + strategies
+    retrieval/      Retriever protocol + strategies (dense, bm25)
 
   connectors/     adapters: external source -> Document
   storage/        adapters: ports -> PostgreSQL + pgvector
@@ -63,6 +63,10 @@ The spec sketches `Connector.sync()`. Recall deliberately keeps `discover`/`fetc
 
 `SearchResponse.timing` breaks a query into `embedding_ms`, `retrieval_ms`, `reranking_ms`, `generation_ms` and `total_ms`. Retrievers record their own stages against an *ambient* timer held in a `ContextVar`, so the `Retriever` protocol stays a single method and concurrent searches never mix up each other's numbers. Latency is one of the things experiments compare, so it cannot be an afterthought.
 
+### Scoring that needs an index lives behind a port
+
+Dense retrieval needs an ANN index; BM25 needs an inverted index and corpus-wide term statistics. Neither can be computed in `core` without dragging SQLAlchemy in. So each has a port — `VectorIndex` and `LexicalIndex` — implemented in `storage/postgres` and consumed by a thin retriever in `core/retrieval`. The retriever owns rank stamping and timing; the adapter owns the scoring SQL. See [retrieval.md](retrieval.md).
+
 ## What is not built yet
 
-Milestone 1 covers ingestion, storage and dense retrieval. BM25, hybrid retrieval, reranking, context selection, generation, evaluation metrics, the experiment runner, the API, workers and the dashboard are all planned — see the roadmap in the [README](../../README.md). Where a seam for them already exists (the `reranking_ms` timing field, the `content_tsv` column, the `hybrid` config section), it is marked as such in the code.
+Milestone 1 covered ingestion, storage and dense retrieval; Milestone 2 adds BM25 (done), then hybrid retrieval, reranking, further chunking strategies, evaluation metrics, the experiment runner and the report generator. Context selection, generation, the API, workers and the dashboard are later — see the roadmap in the [README](../../README.md). Where a seam already exists (the `reranking_ms` timing field, the `hybrid` config section, `chunks.parent_id`), it is marked as such in the code.

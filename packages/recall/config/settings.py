@@ -105,6 +105,23 @@ class ChunkingSettings(RecallModel):
         return {}
 
 
+class LexicalSettings(RecallModel):
+    """BM25 parameters for lexical retrieval.
+
+    The defaults are Robertson & Zaragoza's, and what Lucene ships. ``k1``
+    controls how fast term-frequency gains saturate; ``b`` how strongly scores
+    are normalised by chunk length, with ``b=0`` disabling it entirely. Both are
+    worth sweeping — chunk length distribution differs wildly between corpora.
+
+    The PostgreSQL text search configuration is deliberately *not* here: it is
+    compiled into a generated column, so changing it is a migration, exactly
+    like ``embedding.dimensions``.
+    """
+
+    k1: float = Field(default=1.2, ge=0.0, le=10.0)
+    b: float = Field(default=0.75, ge=0.0, le=1.0)
+
+
 class HybridSettings(RecallModel):
     """Weights for hybrid retrieval. Wired up in Milestone 2."""
 
@@ -191,6 +208,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+    lexical: LexicalSettings = Field(default_factory=LexicalSettings)
     hybrid: HybridSettings = Field(default_factory=HybridSettings)
     reranking: RerankingSettings = Field(default_factory=RerankingSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)

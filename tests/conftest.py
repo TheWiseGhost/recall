@@ -163,6 +163,67 @@ class FakeStorage:
         return results
 
 
+class FakeLexicalIndex:
+    """In-memory :class:`recall.core.ports.LexicalIndex`.
+
+    Deliberately *not* a BM25 implementation: reimplementing the formula here
+    would let a bug in the SQL be mirrored by the same bug in the fake. It
+    scores by raw term overlap, which is enough to exercise the retriever's
+    contract (ordering, ranks, filters, top_k). BM25 arithmetic is verified
+    against a reference in the integration suite, where the real SQL runs.
+    """
+
+    name = "bm25"
+
+    def __init__(self) -> None:
+        self.chunks: dict[uuid.UUID, tuple[Chunk, Document]] = {}
+        self.queries: list[str] = []
+
+    def add(self, chunk: Chunk, document: Document) -> None:
+        self.chunks[chunk.id] = (chunk, document)
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        filters: SearchFilters | None = None,
+    ) -> list[SearchResult]:
+        self.queries.append(query)
+        terms = {word.lower().strip(".,?!") for word in query.split()}
+        scored: list[tuple[float, uuid.UUID]] = []
+        for chunk_id, (chunk, document) in self.chunks.items():
+            if (
+                filters
+                and filters.source_types
+                and document.source_type not in filters.source_types
+            ):
+                continue
+            words = [word.lower().strip(".,?!") for word in chunk.content.split()]
+            overlap = float(sum(1 for word in words if word in terms))
+            if overlap:
+                scored.append((overlap, chunk_id))
+        scored.sort(key=lambda pair: (-pair[0], str(pair[1])))
+
+        results: list[SearchResult] = []
+        for rank, (score, chunk_id) in enumerate(scored[:top_k], start=1):
+            chunk, document = self.chunks[chunk_id]
+            results.append(
+                SearchResult(
+                    chunk_id=chunk_id,
+                    document_id=chunk.document_id,
+                    content=chunk.content,
+                    score=score,
+                    rank=rank,
+                    metadata=dict(chunk.metadata),
+                    document_title=document.title,
+                    document_uri=document.uri,
+                    source_type=document.source_type,
+                )
+            )
+        return results
+
+
 def _cosine(a: Vector, b: Vector) -> float:
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5

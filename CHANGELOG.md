@@ -6,9 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Milestone 2 — retrieval research: BM25, hybrid retrieval, reciprocal rank
-fusion, cross-encoder reranking, sentence/semantic/hierarchical chunking,
-evaluation metrics, benchmark datasets, and the experiment runner.
+Milestone 2 — retrieval research. Still to come: hybrid retrieval, reciprocal
+rank fusion, cross-encoder reranking, sentence/semantic/hierarchical chunking,
+evaluation metrics, benchmark datasets, the experiment runner and the report
+generator.
+
+### Added
+
+**Retrieval**
+- `bm25` retriever: Okapi BM25 over PostgreSQL full-text search — IDF times saturated term frequency with length normalisation, *not* `ts_rank_cd` renamed. Verified against an independent reference implementation.
+- `LexicalIndex` port in `core/ports.py`, implemented by `PostgresBM25Index`.
+- Collection statistics (`N`, `avgdl`, `n(t)`) are computed over the *filtered* corpus in the same statement, so a filtered search is scored against the corpus it actually searched.
+- `lexical.k1` and `lexical.b` configuration.
+
+**Storage**
+- Migration `0002`: `chunks.content_length`, a stored generated column holding BM25's `|D|`, plus the `recall_tsvector_length(tsvector)` function it calls. Maintained by PostgreSQL for every writer.
+- `content_tsv` and `content_length` are now mapped on `ChunkRow` as computed columns.
+
+**CLI**
+- `recall search --strategy/-s` selects the retrieval strategy per query.
+
+### Changed
+- `build_context` no longer hardcodes dense retrieval; `build_retriever` resolves the strategy through `retriever_registry` and supplies its dependencies.
+
+### Known limitations
+- BM25 recomputes collection statistics per query, which means a scan for `avgdl`. Fine at research corpus sizes; a materialized stats table is a future change.
+- The text search configuration is `english`, compiled into a generated column. Changing it is a migration.
+- PostgreSQL stores at most 256 positions per lexeme, so `f(t,D)` saturates at 256 occurrences.
 
 ## [0.1.0] — 2026-07-31
 

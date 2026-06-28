@@ -32,7 +32,8 @@ chunks
   checksum      varchar(64)
   start_char    int         offsets back into documents.content
   end_char      int
-  content_tsv   tsvector    GENERATED, GIN indexed                (BM25, Milestone 2)
+  content_tsv   tsvector    GENERATED, GIN indexed                (BM25 candidate selection)
+  content_length int        GENERATED                             (BM25 |D|)
 
 chunk_embeddings
   chunk_id      uuid        -> chunks.id     ON DELETE CASCADE  } composite
@@ -80,6 +81,14 @@ pgvector applies its ANN index before `WHERE` predicates. A highly selective fil
 `recall/storage/postgres/filters.py` translates `SearchFilters` into predicates. Over-fetching and discarding rows in application code would silently change what `top_k` means, which would corrupt Recall's entire reason for existing: retrieval metrics.
 
 Tag filtering uses a disjunction of `@>` containment checks rather than the more direct `?|` operator, because containment can use the GIN index on `metadata` and `?|` on a nested path cannot.
+
+### The lexical columns are generated, not application state
+
+`content_tsv` and `content_length` are both `GENERATED ALWAYS ... STORED`. PostgreSQL maintains them for every writer — the ORM, a raw `UPDATE`, a future second backend — so they cannot drift from `content`, and no backfill can be interrupted halfway.
+
+`content_length` is BM25's `|D|`: the number of *positions* in the tsvector, i.e. tokens surviving stopword removal and stemming. It needs an aggregate over `unnest()`, which a generated expression may not contain, so migration 0002 adds an `IMMUTABLE` SQL function `recall_tsvector_length(tsvector)` and the column calls it. The cost is one extra `to_tsvector` per insert, since a generated column may not reference another generated column.
+
+The text search configuration (`english`) is compiled into both columns, which makes it a schema decision exactly like the vector dimension. See [retrieval.md](retrieval.md).
 
 ### `metadata` is a hazard in ORM code
 

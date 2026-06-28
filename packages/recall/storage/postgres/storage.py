@@ -17,7 +17,7 @@ from typing import Self
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from recall.config.settings import DatabaseSettings
+from recall.config.settings import DatabaseSettings, LexicalSettings
 from recall.core.embeddings.base import EmbeddingModelInfo, Vector
 from recall.core.models import Chunk, Document
 from recall.storage.postgres.engine import (
@@ -25,6 +25,7 @@ from recall.storage.postgres.engine import (
     create_session_factory,
     session_scope,
 )
+from recall.storage.postgres.lexical_index import PostgresBM25Index
 from recall.storage.postgres.repositories import (
     PostgresChunkRepository,
     PostgresDocumentRepository,
@@ -38,12 +39,14 @@ from recall.storage.postgres.vector_index import PostgresVectorIndex, embedding_
 class Storage:
     """Owns the engine and exposes the repositories."""
 
-    def __init__(self, engine: AsyncEngine) -> None:
+    def __init__(self, engine: AsyncEngine, *, lexical: LexicalSettings | None = None) -> None:
         self.engine = engine
         self.sessions: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         self.documents = PostgresDocumentRepository(self.sessions)
         self.chunks = PostgresChunkRepository(self.sessions)
         self.vectors = PostgresVectorIndex(self.sessions)
+        tuning = lexical or LexicalSettings()
+        self.lexical = PostgresBM25Index(self.sessions, k1=tuning.k1, b=tuning.b)
 
     async def index_document(
         self,
@@ -102,6 +105,8 @@ class Storage:
         await self.close()
 
 
-def create_storage(settings: DatabaseSettings) -> Storage:
+def create_storage(
+    settings: DatabaseSettings, *, lexical: LexicalSettings | None = None
+) -> Storage:
     """Build a :class:`Storage` from database settings."""
-    return Storage(create_engine(settings))
+    return Storage(create_engine(settings), lexical=lexical)

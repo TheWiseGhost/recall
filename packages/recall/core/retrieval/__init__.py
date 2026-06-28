@@ -1,13 +1,15 @@
 """Retrieval strategies.
 
-Milestone 1 ships dense retrieval only. BM25, hybrid scoring and reciprocal
-rank fusion arrive in Milestone 2 and plug into the same registry.
+Importing the concrete modules is what populates the registry. Hybrid scoring
+and reciprocal rank fusion plug into the same registry.
 """
 
 from recall.core.retrieval.base import RetrievalTiming, Retriever, retriever_registry
 from recall.core.retrieval.dense import DenseRetriever
+from recall.core.retrieval.lexical import BM25Retriever
 
 __all__ = [
+    "BM25Retriever",
     "DenseRetriever",
     "RetrievalTiming",
     "Retriever",

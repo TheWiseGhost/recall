@@ -17,8 +17,8 @@ from recall.core.chunking.base import Chunker
 from recall.core.embeddings import create_embedder
 from recall.core.embeddings.base import Embedder
 from recall.core.errors import ConfigurationError
+from recall.core.retrieval import create_retriever
 from recall.core.retrieval.base import Retriever
-from recall.core.retrieval.dense import DenseRetriever
 from recall.pipeline.ingest import IngestionPipeline
 from recall.pipeline.search import SearchService
 from recall.storage.postgres.storage import Storage, create_storage
@@ -65,19 +65,35 @@ def build_embedder(settings: Settings) -> Embedder:
     return create_embedder(settings.embedding.provider, **settings.embedding.factory_kwargs())
 
 
+def build_retriever(strategy: str, *, storage: Storage, embedder: Embedder) -> Retriever:
+    """Instantiate ``strategy`` with the collaborators it needs.
+
+    Retrievers are resolved through the registry — so a plugin registering its
+    own ``dense`` wins — but each takes different dependencies, and deciding
+    which to hand it is exactly the composition root's job. Adding a strategy
+    that reuses an existing dependency set needs no change here.
+    """
+    dependencies: dict[str, dict[str, object]] = {
+        "dense": {"embedder": embedder, "index": storage.vectors},
+        "bm25": {"index": storage.lexical},
+    }
+    if strategy not in dependencies:
+        available = ", ".join(sorted(dependencies))
+        raise ConfigurationError(
+            f"retrieval strategy {strategy!r} cannot be wired up. Available: {available}. "
+            "Hybrid retrieval and reranking arrive later in Milestone 2."
+        )
+    return create_retriever(strategy, **dependencies[strategy])
+
+
 def build_context(settings: Settings, *, retrieval_strategy: str | None = None) -> RecallContext:
     """Wire storage, chunker, embedder and retriever from ``settings``."""
-    storage = create_storage(settings.database)
+    storage = create_storage(settings.database, lexical=settings.lexical)
     embedder = build_embedder(settings)
     chunker = build_chunker(settings)
 
     strategy = retrieval_strategy or settings.retrieval.default
-    if strategy != "dense":
-        raise ConfigurationError(
-            f"retrieval strategy {strategy!r} is not available in v0.1. "
-            "Only 'dense' is implemented; BM25 and hybrid arrive in Milestone 2."
-        )
-    retriever: Retriever = DenseRetriever(embedder=embedder, index=storage.vectors)
+    retriever = build_retriever(strategy, storage=storage, embedder=embedder)
 
     return RecallContext(
         settings=settings,

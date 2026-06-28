@@ -50,9 +50,9 @@ def _settings(config: Path | None = None) -> Settings:
     return settings
 
 
-def _context(settings: Settings) -> RecallContext:
+def _context(settings: Settings, *, retrieval_strategy: str | None = None) -> RecallContext:
     try:
-        return build_context(settings)
+        return build_context(settings, retrieval_strategy=retrieval_strategy)
     except RecallError as exc:
         fail(str(exc))
 
@@ -303,6 +303,14 @@ def search(
     query: Annotated[str, typer.Argument(help="The search query.")],
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
     top_k: Annotated[int, typer.Option("--top-k", "-k", min=1, max=200)] = 10,
+    strategy: Annotated[
+        str | None,
+        typer.Option(
+            "--strategy",
+            "-s",
+            help="Retrieval strategy. Defaults to retrieval.default in recall.yaml.",
+        ),
+    ] = None,
     source_type: Annotated[
         list[str] | None, typer.Option("--source-type", help="Filter by source type.")
     ] = None,
@@ -326,8 +334,14 @@ def search(
             hint=f"Valid source types: {', '.join(t.value for t in SourceType)}",
         )
 
+    if strategy is not None and strategy not in retriever_registry:
+        fail(
+            f"Unknown retrieval strategy {strategy!r}.",
+            hint=f"Available: {', '.join(retriever_registry.names())}",
+        )
+
     async def run() -> Any:
-        context = _context(settings)
+        context = _context(settings, retrieval_strategy=strategy)
         try:
             return await context.search.search(query, top_k=top_k, filters=filters)
         finally:

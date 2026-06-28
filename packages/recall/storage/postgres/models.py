@@ -13,6 +13,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
     Index,
@@ -22,9 +23,26 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# The PostgreSQL text search configuration used for lexical retrieval. It is
+# baked into the generated columns below, exactly like the pgvector column's
+# dimension: changing it is a migration and a table rewrite, not a setting.
+#
+# TODO / FUTURE: make this configurable per corpus for non-English collections.
+TEXT_SEARCH_CONFIG = "english"
+
+# SQL function created by migration 0002. Returns the number of *positions* in a
+# tsvector — i.e. the token count after stopword removal and stemming — which is
+# BM25's |D|. It has to be a function rather than an inline expression because
+# summing over ``unnest()`` is an aggregate, and generated columns may not
+# contain subqueries.
+TSVECTOR_LENGTH_FUNCTION = "recall_tsvector_length"
+
+_CONTENT_TSV_EXPRESSION = f"to_tsvector('{TEXT_SEARCH_CONFIG}', content)"
+_CONTENT_LENGTH_EXPRESSION = f"{TSVECTOR_LENGTH_FUNCTION}({_CONTENT_TSV_EXPRESSION})"
 
 
 class Base(DeclarativeBase):
@@ -80,11 +98,23 @@ class ChunkRow(Base):
     start_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # --- lexical retrieval, maintained by PostgreSQL ---------------------
+    # Both are STORED generated columns, so they are excluded from every
+    # INSERT and can never drift from `content` — including for writers that
+    # bypass this ORM. `content_length` is BM25's |D|.
+    content_tsv: Mapped[str] = mapped_column(
+        TSVECTOR, Computed(_CONTENT_TSV_EXPRESSION, persisted=True), nullable=False
+    )
+    content_length: Mapped[int] = mapped_column(
+        Integer, Computed(_CONTENT_LENGTH_EXPRESSION, persisted=True), nullable=False
+    )
+
     document: Mapped[DocumentRow] = relationship(back_populates="chunks")
 
     __table_args__ = (
         Index("ix_chunks_document_position", "document_id", "position"),
         Index("ix_chunks_metadata", "metadata", postgresql_using="gin"),
+        Index("ix_chunks_content_tsv", "content_tsv", postgresql_using="gin"),
         CheckConstraint("position >= 0", name="ck_chunks_position_non_negative"),
     )
 
