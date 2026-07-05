@@ -6,14 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Milestone 2 — retrieval research. Still to come: hybrid retrieval, reciprocal
-rank fusion, cross-encoder reranking, sentence/semantic/hierarchical chunking,
-evaluation metrics, benchmark datasets, the experiment runner and the report
-generator.
+Milestone 2 — retrieval research. Still to come: cross-encoder reranking,
+sentence/semantic/hierarchical chunking, evaluation metrics, benchmark
+datasets, the experiment runner and the report generator.
 
 ### Added
 
 **Retrieval**
+- `hybrid` retriever: fans out to named component retrievers concurrently and fuses their rankings. Generic over its components — "dense + BM25" is the shipped configuration, not an assumption in the code.
+- Rank fusion in a `fusion_registry`: `rrf` (reciprocal rank fusion, the default) and `weighted` (min-max normalised weighted score fusion). Weights are relative and rescaled to sum to 1.
+- `SearchResult.component_scores` and `component_ranks` record what each component scored and ranked a chunk, so a fused result can still be attributed.
+- `RetrievalTiming.fusion_ms`. Concurrent component timings are merged with `max`, not `sum`, so the breakdown cannot exceed the directly-measured `total_ms`.
+- `hybrid.components` and `hybrid.candidate_multiplier` configuration; `hybrid.fusion` and `hybrid.components` are validated against the registries at load time.
 - `bm25` retriever: Okapi BM25 over PostgreSQL full-text search — IDF times saturated term frequency with length normalisation, *not* `ts_rank_cd` renamed. Verified against an independent reference implementation.
 - `LexicalIndex` port in `core/ports.py`, implemented by `PostgresBM25Index`.
 - Collection statistics (`N`, `avgdl`, `n(t)`) are computed over the *filtered* corpus in the same statement, so a filtered search is scored against the corpus it actually searched.
@@ -30,6 +34,7 @@ generator.
 - `build_context` no longer hardcodes dense retrieval; `build_retriever` resolves the strategy through `retriever_registry` and supplies its dependencies.
 
 ### Known limitations
+- `weighted` fusion min-max normalises per query, so the bottom of each component's list scores 0 and fused scores are not comparable across queries. `rrf` is the default for this reason.
 - BM25 recomputes collection statistics per query, which means a scan for `avgdl`. Fine at research corpus sizes; a materialized stats table is a future change.
 - The text search configuration is `english`, compiled into a generated column. Changing it is a migration.
 - PostgreSQL stores at most 256 positions per lexeme, so `f(t,D)` saturates at 256 occurrences.

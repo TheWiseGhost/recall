@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Protocol, runtime_checkable
@@ -21,6 +21,10 @@ class RetrievalTiming(RecallModel):
 
     embedding_ms: float = 0.0
     retrieval_ms: float = 0.0
+    # Rank fusion, for hybrid retrieval. Separate from retrieval_ms so "is
+    # hybrid worth its latency?" can distinguish the extra index query from the
+    # cost of combining the results.
+    fusion_ms: float = 0.0
     reranking_ms: float = 0.0
     generation_ms: float = 0.0
     total_ms: float = 0.0
@@ -59,6 +63,18 @@ class Timer:
         finally:
             _current_timer.reset(token)
 
+    def merge_concurrent(self, others: Iterable[Timer]) -> None:
+        """Fold in stage timings from work that ran in parallel with each other.
+
+        Combined with ``max``, not ``sum``. Two 20 ms index lookups that
+        overlapped cost 20 ms of wall clock; summing them would report 40 ms
+        and exceed ``total_ms``, which is measured directly and would then
+        contradict its own breakdown.
+        """
+        for other in others:
+            for name, elapsed in other.stages.items():
+                self.stages[name] = max(self.stages.get(name, 0.0), elapsed)
+
     def to_timing(self) -> RetrievalTiming:
         total = round(self.total_ms, 3)
         retrieval = self.stages.get("retrieval")
@@ -68,6 +84,7 @@ class Timer:
         return RetrievalTiming(
             embedding_ms=round(self.stages.get("embedding", 0.0), 3),
             retrieval_ms=round(retrieval or 0.0, 3),
+            fusion_ms=round(self.stages.get("fusion", 0.0), 3),
             reranking_ms=round(self.stages.get("reranking", 0.0), 3),
             generation_ms=round(self.stages.get("generation", 0.0), 3),
             total_ms=total,
@@ -90,6 +107,16 @@ def stage(name: str) -> Iterator[None]:
         return
     with timer.stage(name):
         yield
+
+
+def record_concurrent(timers: Iterable[Timer]) -> None:
+    """Merge timers from parallel sub-searches into the ambient timer.
+
+    A no-op when nothing is timing, like :func:`stage`.
+    """
+    ambient = _current_timer.get()
+    if ambient is not None:
+        ambient.merge_concurrent(timers)
 
 
 @runtime_checkable

@@ -29,6 +29,7 @@ from pydantic_settings import (
 from recall.config.interpolation import interpolate
 from recall.core.errors import ConfigurationError
 from recall.core.models import RecallModel
+from recall.core.registry import Registry
 
 CONFIG_FILENAMES = ("recall.yaml", "recall.yml")
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://recall:recall@localhost:5432/recall"
@@ -123,12 +124,44 @@ class LexicalSettings(RecallModel):
 
 
 class HybridSettings(RecallModel):
-    """Weights for hybrid retrieval. Wired up in Milestone 2."""
+    """Hybrid retrieval: which signals to fuse, and how.
+
+    Weights are relative — they are rescaled to sum to 1 before use, so
+    ``0.65/0.35`` and ``65/35`` behave identically and doubling both changes
+    nothing.
+    """
 
     dense_weight: float = Field(default=0.65, ge=0.0, le=1.0)
     lexical_weight: float = Field(default=0.35, ge=0.0, le=1.0)
     fusion: Literal["weighted", "rrf"] = "rrf"
     rrf_k: int = Field(default=60, ge=1)
+    # Each component is asked for `candidate_multiplier * top_k` results before
+    # fusion. Fusion can only see what a component returned, so a chunk outside
+    # one component's truncated list is scored as if that component rejected it.
+    # Over-fetching pushes that boundary out.
+    candidate_multiplier: int = Field(default=3, ge=1, le=20)
+    # Which retrievers to fuse. Every name must be a registered retriever that
+    # the composition root knows how to build.
+    components: list[str] = Field(default_factory=lambda: ["dense", "bm25"])
+
+    @model_validator(mode="after")
+    def _weights_are_usable(self) -> Self:
+        if self.dense_weight + self.lexical_weight <= 0:
+            raise ValueError("hybrid.dense_weight and hybrid.lexical_weight must not both be zero")
+        if not self.components:
+            raise ValueError("hybrid.components must name at least one retriever")
+        if len(set(self.components)) != len(self.components):
+            raise ValueError(f"hybrid.components contains duplicates: {self.components}")
+        return self
+
+    def weights(self) -> dict[str, float]:
+        """Per-component weights, keyed by retriever name.
+
+        Anything other than ``dense`` and ``bm25`` gets weight 1: a component
+        Recall has no dedicated setting for should not silently be weighted 0.
+        """
+        named = {"dense": self.dense_weight, "bm25": self.lexical_weight}
+        return {name: named.get(name, 1.0) for name in self.components}
 
 
 class RetrievalSettings(RecallModel):
@@ -300,13 +333,18 @@ def _validate_component_names(settings: Settings) -> None:
     """Fail fast when configuration names a component that is not registered."""
     from recall.core.chunking import chunker_registry
     from recall.core.embeddings import embedder_registry
-    from recall.core.retrieval import retriever_registry
+    from recall.core.retrieval import fusion_registry, retriever_registry
 
-    checks = (
+    checks: list[tuple[str, str, Registry[Any]]] = [
         ("chunking.strategy", settings.chunking.strategy, chunker_registry),
         ("embedding.provider", settings.embedding.provider, embedder_registry),
         ("retrieval.default", settings.retrieval.default, retriever_registry),
-    )
+        ("hybrid.fusion", settings.hybrid.fusion, fusion_registry),
+    ]
+    checks += [
+        (f"hybrid.components[{position}]", name, retriever_registry)
+        for position, name in enumerate(settings.hybrid.components)
+    ]
     for key, value, registry in checks:
         if value not in registry:
             raise ConfigurationError(

@@ -19,6 +19,7 @@ Strategies are resolved by name from `retriever_registry`, so `retrieval.default
 |---|---|---|---|
 | `dense` | cosine similarity over pgvector | yes | `VectorIndex` |
 | `bm25` | Okapi BM25 over PostgreSQL FTS | no | `LexicalIndex` |
+| `hybrid` | rank fusion over the above | inherits from its components | — |
 
 ## Dense
 
@@ -78,11 +79,55 @@ The text search configuration is **not** a setting. It is compiled into a genera
 - PostgreSQL stores at most 256 positions per lexeme in a tsvector, so `f(t,D)` saturates at 256 occurrences. Unreachable for chunk-sized text; it would flatten term frequency for whole-book chunks.
 - English only, per the note above.
 
+## Hybrid
+
+`HybridRetriever` fans out to named component retrievers concurrently and fuses their rankings. It knows nothing about vectors or BM25 — it takes `Mapping[str, Retriever]` and a `Fusion` — so "dense + BM25" is the configuration that ships, not an assumption in the code. Fusing a third signal is a config change.
+
+```yaml
+retrieval:
+  default: hybrid
+
+hybrid:
+  components: [dense, bm25]
+  fusion: rrf              # rrf | weighted
+  dense_weight: 0.65
+  lexical_weight: 0.35
+  rrf_k: 60
+  candidate_multiplier: 3
+```
+
+### Fusion strategies
+
+**`rrf` — reciprocal rank fusion** (the default):
+
+```
+score(d) = Σ  w_r / (k + rank_r(d))
+           r
+```
+
+Discarding the component scores is the point, not a shortcut. BM25 scores are unbounded sums over query terms; cosine similarities live in `[-1, 1]`. No fixed rescaling makes them comparable, because a BM25 score of 8 means something different for a one-word query than for a ten-word one. Ranks are the only signal the two lists genuinely share. `k=60` is Cormack, Clarke & Buettcher's value; it damps the top of the curve, so rank 1 is not worth twice rank 2.
+
+**`weighted` — weighted score fusion**: min-max normalises each list, then combines. It can express "this retriever was *much* more confident" where RRF sees only "one position better". Its cost is real and is pinned by a test: normalisation is per query over the returned candidates, so the bottom of every list scores 0 — a chunk both components retrieved, but which one ranked last, gets no credit for the second component at all. Two queries' fused scores are also not comparable. Prefer `rrf` unless score magnitudes are specifically what you want to weigh.
+
+Weights are relative and rescaled to sum to 1, so `0.65/0.35` and `65/35` are identical and doubling both changes nothing.
+
+### Decisions worth knowing about
+
+**Components run concurrently.** They are independent queries. A hybrid search that cost the sum of its parts would lose the latency comparison for reasons that have nothing to do with retrieval quality.
+
+**Candidates are over-fetched.** Fusion can only see what a component returned, so a chunk ranked first by dense but outside BM25's truncated list is scored as though BM25 rejected it — when in fact BM25 was never asked past position `k`. `candidate_multiplier` (default 3) pushes that boundary out. It is cheap here because both components are one indexed query; it would not be free in front of a remote reranker.
+
+**Truncation happens after fusion, never before.** Cutting to `top_k` first would discard exactly the agreement evidence fusion exists to use.
+
+**Every component's contribution is kept.** `SearchResult.component_scores` and `component_ranks` record what each retriever scored and ranked a chunk. "Is hybrid worth it?" is usually really "what does each side contribute?", and that becomes unanswerable once fusion has collapsed the lists.
+
 ## Timing
 
 Retrievers record their own stages against an ambient timer held in a `ContextVar`, so `Retriever` stays a single method and concurrent searches never mix up each other's numbers.
 
 BM25 records only a `retrieval` stage. An experiment comparing it against dense retrieval therefore sees `embedding_ms = 0`, which is the honest number: there is no model in the path. That difference is precisely what a "does the quality justify the latency?" question is asking about.
+
+Hybrid gives each component its own `Timer` and merges them with **max**, not sum — two 20 ms lookups that overlapped cost 20 ms of wall clock, and summing them would report 40 ms and exceed `total_ms`, which is measured directly. The breakdown would then contradict its own total. Fusion is recorded separately as `fusion_ms`, so the extra index query and the cost of combining results can be told apart.
 
 ## How BM25 is tested
 
@@ -94,4 +139,4 @@ Alongside it are property tests that would fail against a plausible wrong implem
 
 ## Not built yet
 
-Hybrid retrieval, reciprocal rank fusion and reranking are the next steps in Milestone 2. The seams exist: `hybrid.fusion`, `dense_weight`, `lexical_weight` and `rrf_k` are already in configuration, and `RetrievalTiming.reranking_ms` is already in the result.
+Reranking is the next step in Milestone 2; `RetrievalTiming.reranking_ms` is already in the result. Context selection (top-k, MMR, parent-child) follows in Milestone 4.

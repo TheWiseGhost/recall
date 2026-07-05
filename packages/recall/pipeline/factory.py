@@ -19,6 +19,7 @@ from recall.core.embeddings.base import Embedder
 from recall.core.errors import ConfigurationError
 from recall.core.retrieval import create_retriever
 from recall.core.retrieval.base import Retriever
+from recall.core.retrieval.fusion import Fusion, create_fusion
 from recall.pipeline.ingest import IngestionPipeline
 from recall.pipeline.search import SearchService
 from recall.storage.postgres.storage import Storage, create_storage
@@ -65,23 +66,51 @@ def build_embedder(settings: Settings) -> Embedder:
     return create_embedder(settings.embedding.provider, **settings.embedding.factory_kwargs())
 
 
-def build_retriever(strategy: str, *, storage: Storage, embedder: Embedder) -> Retriever:
+def build_fusion(settings: Settings) -> Fusion:
+    """Build the fusion strategy named by ``hybrid.fusion``."""
+    kwargs: dict[str, object] = {"weights": settings.hybrid.weights()}
+    if settings.hybrid.fusion == "rrf":
+        kwargs["k"] = settings.hybrid.rrf_k
+    return create_fusion(settings.hybrid.fusion, **kwargs)
+
+
+def build_retriever(
+    strategy: str, *, storage: Storage, embedder: Embedder, settings: Settings
+) -> Retriever:
     """Instantiate ``strategy`` with the collaborators it needs.
 
     Retrievers are resolved through the registry — so a plugin registering its
     own ``dense`` wins — but each takes different dependencies, and deciding
-    which to hand it is exactly the composition root's job. Adding a strategy
-    that reuses an existing dependency set needs no change here.
+    which to hand it is exactly the composition root's job.
     """
+    if strategy == "hybrid":
+        # Recursive, because a hybrid's components are themselves retrievers.
+        # `hybrid` is excluded to stop a config naming itself from recursing
+        # forever.
+        components = {
+            name: build_retriever(name, storage=storage, embedder=embedder, settings=settings)
+            for name in settings.hybrid.components
+            if name != "hybrid"
+        }
+        if not components:
+            raise ConfigurationError(
+                "hybrid.components must name retrievers other than 'hybrid' itself"
+            )
+        return create_retriever(
+            "hybrid",
+            components=components,
+            fusion=build_fusion(settings),
+            candidate_multiplier=settings.hybrid.candidate_multiplier,
+        )
+
     dependencies: dict[str, dict[str, object]] = {
         "dense": {"embedder": embedder, "index": storage.vectors},
         "bm25": {"index": storage.lexical},
     }
     if strategy not in dependencies:
-        available = ", ".join(sorted(dependencies))
+        available = ", ".join([*sorted(dependencies), "hybrid"])
         raise ConfigurationError(
-            f"retrieval strategy {strategy!r} cannot be wired up. Available: {available}. "
-            "Hybrid retrieval and reranking arrive later in Milestone 2."
+            f"retrieval strategy {strategy!r} cannot be wired up. Available: {available}."
         )
     return create_retriever(strategy, **dependencies[strategy])
 
@@ -93,7 +122,7 @@ def build_context(settings: Settings, *, retrieval_strategy: str | None = None) 
     chunker = build_chunker(settings)
 
     strategy = retrieval_strategy or settings.retrieval.default
-    retriever = build_retriever(strategy, storage=storage, embedder=embedder)
+    retriever = build_retriever(strategy, storage=storage, embedder=embedder, settings=settings)
 
     return RecallContext(
         settings=settings,

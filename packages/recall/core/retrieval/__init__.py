@@ -6,14 +6,28 @@ and reciprocal rank fusion plug into the same registry.
 
 from recall.core.retrieval.base import RetrievalTiming, Retriever, retriever_registry
 from recall.core.retrieval.dense import DenseRetriever
+from recall.core.retrieval.fusion import (
+    Fusion,
+    ReciprocalRankFusion,
+    WeightedScoreFusion,
+    create_fusion,
+    fusion_registry,
+)
+from recall.core.retrieval.hybrid import HybridRetriever
 from recall.core.retrieval.lexical import BM25Retriever
 
 __all__ = [
     "BM25Retriever",
     "DenseRetriever",
+    "Fusion",
+    "HybridRetriever",
+    "ReciprocalRankFusion",
     "RetrievalTiming",
     "Retriever",
+    "WeightedScoreFusion",
+    "create_fusion",
     "create_retriever",
+    "fusion_registry",
     "retriever_registry",
 ]
 

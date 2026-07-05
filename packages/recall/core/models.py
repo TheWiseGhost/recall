@@ -157,6 +157,12 @@ class SearchResult(RecallModel):
     document_uri: str | None = None
     source_type: SourceType | None = None
     retriever: str | None = None
+    # Populated only by a fusing retriever: what each component scored and
+    # ranked this chunk. "Is hybrid worth it?" is usually really "what does
+    # each side contribute?", and that is unanswerable after fusion has
+    # collapsed the lists unless the contributions are kept.
+    component_scores: dict[str, float] = Field(default_factory=dict)
+    component_ranks: dict[str, int] = Field(default_factory=dict)
 
     def with_rank(self, rank: int) -> SearchResult:
         """Return a copy re-stamped with a new 1-based rank."""
