@@ -23,7 +23,8 @@ from recall.core.chunking import chunker_registry
 from recall.core.embeddings import embedder_registry
 from recall.core.errors import RecallError
 from recall.core.models import SearchFilters, SourceType, SyncResult
-from recall.core.retrieval import retriever_registry
+from recall.core.reranking import reranker_registry
+from recall.core.retrieval import fusion_registry, retriever_registry
 from recall.observability.logging import configure_logging
 from recall.pipeline.factory import RecallContext, build_context
 
@@ -226,6 +227,8 @@ def connectors() -> None:
     table.add_row("chunkers", ", ".join(chunker_registry.names()))
     table.add_row("embedders", ", ".join(embedder_registry.names()))
     table.add_row("retrievers", ", ".join(retriever_registry.names()))
+    table.add_row("fusion", ", ".join(fusion_registry.names()))
+    table.add_row("rerankers", ", ".join(reranker_registry.names()))
     console.print(table)
 
 
@@ -311,6 +314,13 @@ def search(
             help="Retrieval strategy. Defaults to retrieval.default in recall.yaml.",
         ),
     ] = None,
+    rerank: Annotated[
+        str | None,
+        typer.Option(
+            "--rerank",
+            help="Reranker to apply. 'off' disables it. Defaults to reranking.* in recall.yaml.",
+        ),
+    ] = None,
     source_type: Annotated[
         list[str] | None, typer.Option("--source-type", help="Filter by source type.")
     ] = None,
@@ -339,6 +349,25 @@ def search(
             f"Unknown retrieval strategy {strategy!r}.",
             hint=f"Available: {', '.join(retriever_registry.names())}",
         )
+
+    if rerank is not None:
+        if rerank == "off":
+            settings = settings.model_copy(
+                update={"reranking": settings.reranking.model_copy(update={"enabled": False})}
+            )
+        elif rerank in reranker_registry:
+            settings = settings.model_copy(
+                update={
+                    "reranking": settings.reranking.model_copy(
+                        update={"enabled": True, "strategy": rerank}
+                    )
+                }
+            )
+        else:
+            fail(
+                f"Unknown reranker {rerank!r}.",
+                hint=f"Available: off, {', '.join(reranker_registry.names())}",
+            )
 
     async def run() -> Any:
         context = _context(settings, retrieval_strategy=strategy)
@@ -394,11 +423,19 @@ def search(
         )
 
     console.print(table)
+    stages = [
+        f"embedding {response.timing.embedding_ms:.1f} ms",
+        f"retrieval {response.timing.retrieval_ms:.1f} ms",
+    ]
+    if response.timing.fusion_ms:
+        stages.append(f"fusion {response.timing.fusion_ms:.1f} ms")
+    if response.reranked:
+        stages.append(
+            f"reranking {response.timing.reranking_ms:.1f} ms over {response.candidates} candidates"
+        )
     console.print(
         f"[dim]{len(response.results)} results in {response.timing.total_ms:.1f} ms "
-        f"(embedding {response.timing.embedding_ms:.1f} ms, "
-        f"retrieval {response.timing.retrieval_ms:.1f} ms) · "
-        f"request {response.request_id}[/dim]"
+        f"({', '.join(stages)}) · request {response.request_id}[/dim]"
     )
 
 

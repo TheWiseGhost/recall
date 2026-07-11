@@ -11,7 +11,7 @@ Recall is research infrastructure, not a chatbot. It exists to make questions li
 
 Every component in the pipeline — connector, chunker, embedder, retriever, reranker, context selector, generator, evaluator — is selected by name from configuration and implements a small protocol. Swapping one is a config change, and adding one is a class plus a line of registration.
 
-> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → fixed-size chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → CLI. Reranking, further chunking strategies and the evaluation harness are next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
+> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → fixed-size chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → **cross-encoder reranking** → CLI. Further chunking strategies and the evaluation harness are next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
 
 ---
 
@@ -32,7 +32,7 @@ Every component in the pipeline — connector, chunker, embedder, retriever, rer
         |
    Retrieval             dense · BM25 · hybrid (RRF / weighted) · metadata filtering
         |
-   Reranking¹            cross-encoder · LLM
+   Reranking             cross-encoder · LLM¹
         |
    Context selection¹    top-k · MMR · parent-child · graph expansion
         |
@@ -116,6 +116,7 @@ recall ingest ./docs --force            # re-chunk and re-embed everything
 recall ingest ./docs --no-prune         # keep documents deleted at the source
 recall search "auth" --source-type pdf --top-k 5
 recall search "auth" --strategy bm25    # lexical; also: dense, hybrid
+recall search "auth" --rerank cross_encoder   # or --rerank off
 recall search "auth" --json             # machine-readable, includes timings
 ```
 
@@ -156,6 +157,12 @@ hybrid:
   lexical_weight: 0.35
   rrf_k: 60
   candidate_multiplier: 3            # over-fetch per component before fusing
+
+reranking:
+  enabled: false
+  strategy: cross_encoder            # none | cross_encoder
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 50                          # candidate pool handed to the reranker
 ```
 
 Any field can be overridden by environment variable: `RECALL_EMBEDDING__PROVIDER=hash`. Configuration is validated on load — a strategy name that is not registered fails at startup, not at the first search.
@@ -174,7 +181,9 @@ Any field can be overridden by environment variable: `RECALL_EMBEDDING__PROVIDER
 
 The formula is verified against an independent reference implementation in the integration suite, and `k1`/`b` are configurable.
 
-`hybrid` runs its components concurrently and fuses their rankings, defaulting to RRF because BM25 scores and cosine similarities are not on a comparable scale and no fixed rescaling makes them so. Every result keeps `component_scores` and `component_ranks`, so "is hybrid worth it?" can be answered with what each side actually contributed rather than a single fused number. See [docs/architecture/retrieval.md](docs/architecture/retrieval.md).
+`hybrid` runs its components concurrently and fuses their rankings, defaulting to RRF because BM25 scores and cosine similarities are not on a comparable scale and no fixed rescaling makes them so. Every result keeps `component_scores` and `component_ranks`, so "is hybrid worth it?" can be answered with what each side actually contributed rather than a single fused number.
+
+Reranking is optional and off by default. When enabled, retrieval widens its candidate pool to `reranking.top_n`, the reranker reorders it, and `reranking_ms` records what that cost. `strategy: none` with `enabled: true` is the control condition — it widens the pool without reordering, so "the wider pool helped" is not mistaken for "the reranker helped". See [docs/architecture/retrieval.md](docs/architecture/retrieval.md).
 
 ---
 
@@ -274,7 +283,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 Filesystem and PDF connectors · fixed-size chunking · pluggable embeddings · PostgreSQL/pgvector storage · dense retrieval · metadata filtering · incremental sync · CLI · Docker · unit and integration tests.
 
 **Milestone 2 — Retrieval research (in progress)**
-✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · cross-encoder reranking · sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
+✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · ✅ cross-encoder reranking · sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
 
 **Milestone 3 — Production architecture**
 FastAPI service · Redis + Celery workers · job status tracking and dead-lettering · Prometheus metrics and Grafana dashboards · retries with backoff.

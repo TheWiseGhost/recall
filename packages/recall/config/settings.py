@@ -170,12 +170,36 @@ class RetrievalSettings(RecallModel):
 
 
 class RerankingSettings(RecallModel):
-    """Reranking configuration. Implemented in Milestone 2."""
+    """Reranking configuration.
+
+    ``top_n`` is the candidate pool retrieval is asked for before reranking —
+    a reranker can only reorder what it is given, so this is the knob that
+    decides how much it can improve. It is also the knob that decides how much
+    latency it costs, which is the whole trade-off.
+
+    ``enabled: true`` with ``strategy: none`` is a deliberate configuration: it
+    widens the pool and truncates without reordering, isolating the effect of
+    the wider pool from the effect of the reranker itself.
+    """
 
     enabled: bool = False
     strategy: str = "none"
     model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     top_n: int = Field(default=50, ge=1)
+    device: str | None = None
+    batch_size: int = Field(default=32, ge=1, le=512)
+    max_length: int = Field(default=512, ge=16, le=8192)
+
+    def factory_kwargs(self) -> dict[str, Any]:
+        """Kwargs for :func:`recall.core.reranking.create_reranker`."""
+        if self.strategy == "cross_encoder":
+            return {
+                "model": self.model,
+                "device": self.device,
+                "batch_size": self.batch_size,
+                "max_length": self.max_length,
+            }
+        return {}
 
 
 class LoggingSettings(RecallModel):
@@ -333,6 +357,7 @@ def _validate_component_names(settings: Settings) -> None:
     """Fail fast when configuration names a component that is not registered."""
     from recall.core.chunking import chunker_registry
     from recall.core.embeddings import embedder_registry
+    from recall.core.reranking import reranker_registry
     from recall.core.retrieval import fusion_registry, retriever_registry
 
     checks: list[tuple[str, str, Registry[Any]]] = [
@@ -340,6 +365,7 @@ def _validate_component_names(settings: Settings) -> None:
         ("embedding.provider", settings.embedding.provider, embedder_registry),
         ("retrieval.default", settings.retrieval.default, retriever_registry),
         ("hybrid.fusion", settings.hybrid.fusion, fusion_registry),
+        ("reranking.strategy", settings.reranking.strategy, reranker_registry),
     ]
     checks += [
         (f"hybrid.components[{position}]", name, retriever_registry)

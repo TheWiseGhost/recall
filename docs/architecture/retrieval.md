@@ -137,6 +137,41 @@ The arithmetic is verified in `tests/integration/test_lexical_index.py` against 
 
 Alongside it are property tests that would fail against a plausible wrong implementation: a rare term must outscore a ubiquitous one (IDF is present), a long chunk that repeats a term must rank worse at `b=1` than at `b=0` (length normalisation reaches the formula), and ten occurrences must not score ten times one occurrence (saturation is sublinear).
 
+## Reranking
+
+Retrieval is recall-oriented and cheap; reranking is precision-oriented and expensive. A bi-encoder — what dense retrieval uses — embeds the query and the document separately, so a document's representation is fixed before the query is known. A cross-encoder reads the pair jointly and can use interactions between them, at the cost of one forward pass per candidate. That is why it reranks a shortlist rather than scoring a corpus.
+
+| Name | What it does | Extra |
+|---|---|---|
+| `none` | truncates to `top_k` without reordering | — |
+| `cross_encoder` | sentence-transformers `CrossEncoder` over each (query, chunk) pair | `local` |
+
+```yaml
+reranking:
+  enabled: true
+  strategy: cross_encoder     # none | cross_encoder
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 50                   # candidate pool handed to the reranker
+  batch_size: 32
+  max_length: 512
+```
+
+### Decisions worth knowing about
+
+**The candidate pool widens, and that is visible.** A reranker can only reorder what it is given, so when reranking is enabled the retriever is asked for `top_n` results rather than `top_k`. That composition lives in `SearchService`, not inside a retriever: burying it would make `top_k` mean different things depending on configuration, which is exactly the kind of silent change that corrupts a metric. `SearchResponse.candidates` records what was actually asked for.
+
+**`enabled: true` with `strategy: none` is a real, useful configuration.** It widens the pool and truncates without reordering — the control condition that separates "did the wider candidate pool help?" from "did the cross-encoder help?". Attributing the first effect to the second is an easy and expensive mistake, so the identity reranker is a selectable component rather than a special case.
+
+**Disabled means disabled.** `build_reranker` returns `None` when reranking is off, so nothing widens and no pass runs at all.
+
+**The retrieval score survives.** A reranker sets `score` to its own output and copies the previous value into `retrieval_score`. Without it, a report could say the reranker ran but not how much it changed — and "how much did it change?" against "what did it cost?" is the entire question.
+
+**Cross-encoder scores are raw model outputs.** Not probabilities, and not on the same scale as cosine similarity or BM25. Only the ordering is meaningful, which is what the retrieval metrics consume.
+
+**Scoring runs off the event loop.** A forward pass is blocking and CPU/GPU-bound; running it on the loop would stall every other request for its duration and make concurrent latency measurements meaningless.
+
+**The model loads lazily.** Configuration validation constructs every named component at startup, and that must never trigger a multi-hundred-megabyte download. The first `rerank()` call loads it; a missing `local` extra raises `RerankerUnavailableError` naming the install command.
+
 ## Not built yet
 
-Reranking is the next step in Milestone 2; `RetrievalTiming.reranking_ms` is already in the result. Context selection (top-k, MMR, parent-child) follows in Milestone 4.
+Context selection (top-k, MMR, parent-child) follows in Milestone 4. An LLM-based reranker is a natural second `Reranker` implementation and needs no changes here.

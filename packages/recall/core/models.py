@@ -163,6 +163,10 @@ class SearchResult(RecallModel):
     # collapsed the lists unless the contributions are kept.
     component_scores: dict[str, float] = Field(default_factory=dict)
     component_ranks: dict[str, int] = Field(default_factory=dict)
+    # Set by a reranker to the score this result carried before reranking. A
+    # report that cannot compare the two orderings can only say the reranker
+    # ran, not how much it changed.
+    retrieval_score: float | None = None
 
     def with_rank(self, rank: int) -> SearchResult:
         """Return a copy re-stamped with a new 1-based rank."""

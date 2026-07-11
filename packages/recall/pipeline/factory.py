@@ -17,6 +17,8 @@ from recall.core.chunking.base import Chunker
 from recall.core.embeddings import create_embedder
 from recall.core.embeddings.base import Embedder
 from recall.core.errors import ConfigurationError
+from recall.core.reranking import create_reranker
+from recall.core.reranking.base import Reranker
 from recall.core.retrieval import create_retriever
 from recall.core.retrieval.base import Retriever
 from recall.core.retrieval.fusion import Fusion, create_fusion
@@ -34,6 +36,7 @@ class RecallContext:
     chunker: Chunker
     embedder: Embedder
     retriever: Retriever
+    reranker: Reranker | None = None
 
     @property
     def ingestion(self) -> IngestionPipeline:
@@ -41,7 +44,11 @@ class RecallContext:
 
     @property
     def search(self) -> SearchService:
-        return SearchService(retriever=self.retriever)
+        return SearchService(
+            retriever=self.retriever,
+            reranker=self.reranker,
+            rerank_candidates=self.settings.reranking.top_n,
+        )
 
     async def close(self) -> None:
         await self.storage.close()
@@ -64,6 +71,20 @@ def build_chunker(settings: Settings) -> Chunker:
 
 def build_embedder(settings: Settings) -> Embedder:
     return create_embedder(settings.embedding.provider, **settings.embedding.factory_kwargs())
+
+
+def build_reranker(settings: Settings) -> Reranker | None:
+    """Build the configured reranker, or ``None`` when reranking is off.
+
+    ``None`` rather than the identity reranker, so a disabled reranker costs
+    nothing at all — not even a pass over the results — and never widens the
+    candidate pool. Selecting ``strategy: none`` with ``enabled: true`` is the
+    separate, deliberate case that *does* widen the pool; see
+    :class:`~recall.config.settings.RerankingSettings`.
+    """
+    if not settings.reranking.enabled:
+        return None
+    return create_reranker(settings.reranking.strategy, **settings.reranking.factory_kwargs())
 
 
 def build_fusion(settings: Settings) -> Fusion:
@@ -130,4 +151,5 @@ def build_context(settings: Settings, *, retrieval_strategy: str | None = None) 
         chunker=chunker,
         embedder=embedder,
         retriever=retriever,
+        reranker=build_reranker(settings),
     )

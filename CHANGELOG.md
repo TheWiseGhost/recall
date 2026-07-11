@@ -6,11 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Milestone 2 — retrieval research. Still to come: cross-encoder reranking,
-sentence/semantic/hierarchical chunking, evaluation metrics, benchmark
-datasets, the experiment runner and the report generator.
+Milestone 2 — retrieval research. Still to come: sentence/semantic/hierarchical
+chunking, evaluation metrics, benchmark datasets, the experiment runner and the
+report generator.
 
 ### Added
+
+**Reranking**
+- `Reranker` protocol and `reranker_registry`, with `none` (identity) and `cross_encoder` (sentence-transformers `CrossEncoder`, behind the `local` extra, imported lazily).
+- `SearchService` composes retrieval and reranking: with a reranker active the candidate pool widens to `reranking.top_n`, and `SearchResponse.candidates` records it. `reranking_ms` is recorded per query.
+- `SearchResult.retrieval_score` preserves the pre-rerank score, so a report can say how much the reranker changed rather than only that it ran.
+- `reranking.device`, `batch_size` and `max_length` configuration; `reranking.strategy` is validated against the registry at load time.
+- `recall search --rerank <strategy>|off`.
 
 **Retrieval**
 - `hybrid` retriever: fans out to named component retrievers concurrently and fuses their rankings. Generic over its components — "dense + BM25" is the shipped configuration, not an assumption in the code.
@@ -34,6 +41,7 @@ datasets, the experiment runner and the report generator.
 - `build_context` no longer hardcodes dense retrieval; `build_retriever` resolves the strategy through `retriever_registry` and supplies its dependencies.
 
 ### Known limitations
+- Cross-encoder scores are raw model outputs — not probabilities, and not comparable to cosine similarity or BM25. Only the ordering is meaningful.
 - `weighted` fusion min-max normalises per query, so the bottom of each component's list scores 0 and fused scores are not comparable across queries. `rrf` is the default for this reason.
 - BM25 recomputes collection statistics per query, which means a scan for `avgdl`. Fine at research corpus sizes; a materialized stats table is a future change.
 - The text search configuration is `english`, compiled into a generated column. Changing it is a migration.
