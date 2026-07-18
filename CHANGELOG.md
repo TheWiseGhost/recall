@@ -6,11 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Milestone 2 — retrieval research. Still to come: sentence/semantic/hierarchical
-chunking, evaluation metrics, benchmark datasets, the experiment runner and the
-report generator.
+Milestone 2 — retrieval research. Still to come: evaluation metrics, benchmark
+datasets, the experiment runner and the report generator.
 
 ### Added
+
+**Chunking**
+- `sentence` chunker: packs whole sentences into token-budgeted windows, with overlap counted in sentences. A sentence longer than `chunk_size` becomes its own oversized chunk rather than being split.
+- `semantic` chunker: embeds each sentence and breaks where consecutive sentences are far apart. The threshold is a percentile of each document's own distances, since absolute cosine distances are not comparable across models.
+- `hierarchical` chunker: emits large parent chunks and the small child chunks inside them, linked by `chunks.parent_id`. Positions are unique across both levels because chunk IDs fold in the position.
+- Dependency-free sentence segmentation in `core/chunking/sentences.py`.
+- `chunking.overlap_sentences`, `breakpoint_percentile`, `buffer_size`, `max_chunk_size`, `min_sentences` and `parent_chunk_size` configuration.
 
 **Reranking**
 - `Reranker` protocol and `reranker_registry`, with `none` (identity) and `cross_encoder` (sentence-transformers `CrossEncoder`, behind the `local` extra, imported lazily).
@@ -38,9 +44,13 @@ report generator.
 - `recall search --strategy/-s` selects the retrieval strategy per query.
 
 ### Changed
+- **`Chunker.chunk` is now async.** Semantic chunking has to embed candidate sentences to find its boundaries, which a synchronous protocol cannot express. `ChunkerBase` subclasses that implement the synchronous `split()` — the documented plugin pattern — are unaffected; override `split_async()` only when splitting needs I/O.
+- `build_chunker(settings, embedder=...)` supplies the pipeline's embedder to the semantic chunker.
 - `build_context` no longer hardcodes dense retrieval; `build_retriever` resolves the strategy through `retriever_registry` and supplies its dependencies.
 
 ### Known limitations
+- Sentence segmentation is a regex heuristic with an explicit abbreviation list, not a trained model. An abbreviation outside the list ends a sentence early.
+- `hierarchical` embeds both levels, so ingestion cost roughly doubles. Embedding children only becomes possible once parent-child context selection exists.
 - Cross-encoder scores are raw model outputs — not probabilities, and not comparable to cosine similarity or BM25. Only the ordering is meaningful.
 - `weighted` fusion min-max normalises per query, so the bottom of each component's list scores 0 and fused scores are not comparable across queries. `rrf` is the default for this reason.
 - BM25 recomputes collection statistics per query, which means a scan for `avgdl`. Fine at research corpus sizes; a materialized stats table is a future change.

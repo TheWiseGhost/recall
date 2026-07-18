@@ -65,8 +65,23 @@ class RecallContext:
         await self.close()
 
 
-def build_chunker(settings: Settings) -> Chunker:
-    return create_chunker(settings.chunking.strategy, **settings.chunking.factory_kwargs())
+def build_chunker(settings: Settings, *, embedder: Embedder | None = None) -> Chunker:
+    """Build the configured chunker.
+
+    Semantic chunking finds its boundaries by embedding candidate sentences, so
+    it needs the same embedder the rest of the pipeline uses — using a
+    different one would make the boundaries depend on a model nothing else
+    knows about.
+    """
+    kwargs = settings.chunking.factory_kwargs()
+    if settings.chunking.strategy == "semantic":
+        if embedder is None:
+            raise ConfigurationError(
+                "chunking.strategy=semantic needs an embedder; build it with "
+                "build_chunker(settings, embedder=...)"
+            )
+        kwargs["embedder"] = embedder
+    return create_chunker(settings.chunking.strategy, **kwargs)
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -140,7 +155,7 @@ def build_context(settings: Settings, *, retrieval_strategy: str | None = None) 
     """Wire storage, chunker, embedder and retriever from ``settings``."""
     storage = create_storage(settings.database, lexical=settings.lexical)
     embedder = build_embedder(settings)
-    chunker = build_chunker(settings)
+    chunker = build_chunker(settings, embedder=embedder)
 
     strategy = retrieval_strategy or settings.retrieval.default
     retriever = build_retriever(strategy, storage=storage, embedder=embedder, settings=settings)

@@ -87,23 +87,78 @@ class EmbeddingSettings(RecallModel):
 
 
 class ChunkingSettings(RecallModel):
+    """Chunking strategy and its parameters.
+
+    Not every field applies to every strategy — ``factory_kwargs`` passes each
+    chunker only what it accepts. Keeping them in one section means a sweep can
+    change ``strategy`` without restructuring the file.
+    """
+
     strategy: str = "fixed"
     chunk_size: int = Field(default=512, ge=16, le=16_000)
     overlap: int = Field(default=64, ge=0)
 
+    # sentence: overlap is counted in sentences, not tokens.
+    overlap_sentences: int = Field(default=1, ge=0, le=100)
+
+    # semantic
+    breakpoint_percentile: float = Field(default=0.95, gt=0.0, lt=1.0)
+    buffer_size: int = Field(default=1, ge=0, le=10)
+    max_chunk_size: int = Field(default=1024, ge=16, le=32_000)
+    min_sentences: int = Field(default=1, ge=1)
+
+    # hierarchical
+    parent_chunk_size: int = Field(default=2048, ge=32, le=32_000)
+
     @model_validator(mode="after")
-    def _overlap_fits(self) -> Self:
+    def _sizes_are_consistent(self) -> Self:
         if self.overlap >= self.chunk_size:
             raise ValueError(
                 f"chunking.overlap ({self.overlap}) must be smaller than "
                 f"chunking.chunk_size ({self.chunk_size})"
             )
+        if self.strategy == "hierarchical" and self.parent_chunk_size <= self.chunk_size:
+            raise ValueError(
+                f"chunking.parent_chunk_size ({self.parent_chunk_size}) must be larger "
+                f"than chunking.chunk_size ({self.chunk_size}); otherwise the "
+                "hierarchy is flat"
+            )
+        if self.strategy == "semantic" and self.max_chunk_size < self.chunk_size:
+            raise ValueError(
+                f"chunking.max_chunk_size ({self.max_chunk_size}) must be at least "
+                f"chunking.chunk_size ({self.chunk_size})"
+            )
         return self
 
     def factory_kwargs(self) -> dict[str, Any]:
-        if self.strategy == "fixed":
-            return {"chunk_size": self.chunk_size, "overlap": self.overlap}
-        return {}
+        """Kwargs for :func:`recall.core.chunking.create_chunker`.
+
+        ``semantic`` additionally needs an ``embedder``, which only the
+        composition root can supply; see ``pipeline.factory.build_chunker``.
+        """
+        match self.strategy:
+            case "fixed":
+                return {"chunk_size": self.chunk_size, "overlap": self.overlap}
+            case "sentence":
+                return {
+                    "chunk_size": self.chunk_size,
+                    "overlap_sentences": self.overlap_sentences,
+                }
+            case "semantic":
+                return {
+                    "breakpoint_percentile": self.breakpoint_percentile,
+                    "buffer_size": self.buffer_size,
+                    "max_chunk_size": self.max_chunk_size,
+                    "min_sentences": self.min_sentences,
+                }
+            case "hierarchical":
+                return {
+                    "parent_chunk_size": self.parent_chunk_size,
+                    "chunk_size": self.chunk_size,
+                    "overlap": self.overlap,
+                }
+            case _:
+                return {}
 
 
 class LexicalSettings(RecallModel):

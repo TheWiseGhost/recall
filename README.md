@@ -11,7 +11,7 @@ Recall is research infrastructure, not a chatbot. It exists to make questions li
 
 Every component in the pipeline — connector, chunker, embedder, retriever, reranker, context selector, generator, evaluator — is selected by name from configuration and implements a small protocol. Swapping one is a config change, and adding one is a class plus a line of registration.
 
-> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → fixed-size chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → **cross-encoder reranking** → CLI. Further chunking strategies and the evaluation harness are next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
+> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → **fixed / sentence / semantic / hierarchical** chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → **cross-encoder reranking** → CLI. The evaluation harness — metrics, datasets, experiment runner, report generator — is next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
 
 ---
 
@@ -24,7 +24,7 @@ Every component in the pipeline — connector, chunker, embedder, retriever, rer
         |
    Processing            parse · normalize · extract metadata · checksum
         |
-   Chunking              fixed · sentence¹ · semantic¹ · hierarchical¹
+   Chunking              fixed · sentence · semantic · hierarchical
         |
    Embeddings            sentence-transformers · OpenAI · hash (deterministic)
         |
@@ -138,9 +138,12 @@ embedding:
   dimensions: 768
 
 chunking:
-  strategy: fixed
+  strategy: fixed                    # fixed | sentence | semantic | hierarchical
   chunk_size: 512
   overlap: 64
+  overlap_sentences: 1               # sentence
+  breakpoint_percentile: 0.95        # semantic
+  parent_chunk_size: 2048            # hierarchical
 
 retrieval:
   default: dense                     # dense | bm25 | hybrid
@@ -166,6 +169,21 @@ reranking:
 ```
 
 Any field can be overridden by environment variable: `RECALL_EMBEDDING__PROVIDER=hash`. Configuration is validated on load — a strategy name that is not registered fails at startup, not at the first search.
+
+---
+
+## Chunking strategies
+
+| Strategy | Cuts on | Embeds at ingest |
+|---|---|---|
+| `fixed` | token budget | chunks only |
+| `sentence` | sentence boundaries, packed to a budget | chunks only |
+| `semantic` | embedding distance between consecutive sentences | **every sentence, plus chunks** |
+| `hierarchical` | token budget, at two levels (parent/child) | both levels |
+
+`semantic` embeds every sentence in the corpus at ingest time to find its boundaries — roughly double the ingestion cost on a paid API. Its threshold is a *percentile of the distances within each document*, not an absolute distance, because absolute cosine distances are not comparable across embedding models. `hierarchical` records `parent_id` on every child; the retrieve-child-return-parent step is context selection and lands in Milestone 4.
+
+See [docs/architecture/chunking.md](docs/architecture/chunking.md).
 
 ---
 
@@ -283,7 +301,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 Filesystem and PDF connectors · fixed-size chunking · pluggable embeddings · PostgreSQL/pgvector storage · dense retrieval · metadata filtering · incremental sync · CLI · Docker · unit and integration tests.
 
 **Milestone 2 — Retrieval research (in progress)**
-✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · ✅ cross-encoder reranking · sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
+✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · ✅ cross-encoder reranking · ✅ sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
 
 **Milestone 3 — Production architecture**
 FastAPI service · Redis + Celery workers · job status tracking and dead-lettering · Prometheus metrics and Grafana dashboards · retries with backoff.

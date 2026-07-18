@@ -139,8 +139,11 @@ class TestPageForOffset:
             connector = PDFConnector(root=corpus)
             return await connector.fetch((await connector.discover())[0])
 
-        document = asyncio.run(load())
-        chunks = FixedSizeChunker(chunk_size=12, overlap=2).chunk(document)
+        async def load_and_chunk():
+            document = await load()
+            return document, await FixedSizeChunker(chunk_size=12, overlap=2).chunk(document)
+
+        document, chunks = asyncio.run(load_and_chunk())
         offsets = document.metadata["page_offsets"]
         pages = [page_for_offset(offsets, c.start_char or 0) for c in chunks]
         assert all(page is not None for page in pages)

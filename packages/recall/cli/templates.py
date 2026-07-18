@@ -30,23 +30,50 @@ embedding:
   batch_size: 32
 
 chunking:
+  # Strategies: fixed | sentence | semantic | hierarchical
+  # `semantic` embeds every sentence at ingest time to find its boundaries,
+  # which roughly doubles ingestion cost on a paid embedding API.
   strategy: fixed
   chunk_size: 512
   overlap: 64
+  # sentence: overlap is counted in whole sentences, not tokens.
+  overlap_sentences: 1
+  # semantic
+  breakpoint_percentile: 0.95
+  buffer_size: 1
+  max_chunk_size: 1024
+  # hierarchical: must be larger than chunk_size.
+  parent_chunk_size: 2048
 
 retrieval:
+  # Strategies: dense | bm25 | hybrid
   default: dense
   top_k: 10
 
-# Used from Milestone 2 onwards.
+lexical:
+  # BM25. k1 controls term-frequency saturation, b length normalisation.
+  k1: 1.2
+  b: 0.75
+
 hybrid:
+  components: [dense, bm25]
+  # rrf ignores component scores and fuses on rank alone, which is why it is
+  # the default: BM25 scores and cosine similarities are not comparable.
+  fusion: rrf
   dense_weight: 0.65
   lexical_weight: 0.35
-  fusion: rrf
+  rrf_k: 60
+  # Each component is asked for this multiple of top_k before fusing.
+  candidate_multiplier: 3
 
 reranking:
+  # `cross_encoder` needs the `local` extra. `none` with enabled: true widens
+  # the candidate pool without reordering — the control for a reranking
+  # experiment.
   enabled: false
   strategy: none
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n: 50
 
 logging:
   level: INFO

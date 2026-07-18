@@ -63,7 +63,7 @@ class IngestionPipeline:
     # -- single document --------------------------------------------------
     async def index_document(self, document: Document) -> SyncItemResult:
         """Chunk, embed and index one already-fetched document."""
-        chunks: list[Chunk] = self.chunker.chunk(document)
+        chunks: list[Chunk] = await self.chunker.chunk(document)
         vectors = await self._embed_chunks(chunks)
         written = await self.storage.index_document(document, chunks, vectors, self.embedder.info)
         _log.info(

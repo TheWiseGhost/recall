@@ -39,7 +39,7 @@ async def index(
     chunker: FixedSizeChunker,
     embedder: HashingEmbedder,
 ) -> int:
-    chunks = chunker.chunk(document)
+    chunks = await chunker.chunk(document)
     vectors = await embedder.embed_documents([c.content for c in chunks])
     return await storage.index_document(document, chunks, vectors, embedder.info)
 
@@ -123,7 +123,7 @@ class TestChunkRepository:
     async def test_replace_writes_chunks(self, storage: Storage, chunker: FixedSizeChunker) -> None:
         document = make_document("a.md", " ".join(f"word{i}" for i in range(200)))
         await storage.documents.upsert(document)
-        chunks = chunker.chunk(document)
+        chunks = await chunker.chunk(document)
         written = await storage.chunks.replace_for_document(document.id, chunks)
 
         assert written == len(chunks) > 1
@@ -135,10 +135,10 @@ class TestChunkRepository:
     ) -> None:
         document = make_document("a.md", " ".join(f"word{i}" for i in range(200)))
         await storage.documents.upsert(document)
-        await storage.chunks.replace_for_document(document.id, chunker.chunk(document))
+        await storage.chunks.replace_for_document(document.id, await chunker.chunk(document))
 
         shorter = make_document("a.md", "now short")
-        await storage.chunks.replace_for_document(shorter.id, chunker.chunk(shorter))
+        await storage.chunks.replace_for_document(shorter.id, await chunker.chunk(shorter))
         assert len(await storage.chunks.list_for_document(document.id)) == 1
 
     async def test_get_many_preserves_input_order(
@@ -146,7 +146,7 @@ class TestChunkRepository:
     ) -> None:
         document = make_document("a.md", " ".join(f"word{i}" for i in range(200)))
         await storage.documents.upsert(document)
-        chunks = chunker.chunk(document)
+        chunks = await chunker.chunk(document)
         await storage.chunks.replace_for_document(document.id, chunks)
 
         wanted = [chunks[2].id, chunks[0].id]
@@ -157,7 +157,7 @@ class TestChunkRepository:
     ) -> None:
         document = make_document("a.md", " ".join(f"word{i}" for i in range(200)))
         await storage.documents.upsert(document)
-        await storage.chunks.replace_for_document(document.id, chunker.chunk(document))
+        await storage.chunks.replace_for_document(document.id, await chunker.chunk(document))
 
         await storage.documents.delete(document.id)
         assert await storage.chunks.list_for_document(document.id) == []
@@ -165,7 +165,7 @@ class TestChunkRepository:
     async def test_metadata_round_trips(self, storage: Storage, chunker: FixedSizeChunker) -> None:
         document = make_document("a.md", "some content", file_type="md", tags=["security"])
         await storage.documents.upsert(document)
-        await storage.chunks.replace_for_document(document.id, chunker.chunk(document))
+        await storage.chunks.replace_for_document(document.id, await chunker.chunk(document))
         chunk = (await storage.chunks.list_for_document(document.id))[0]
         assert chunk.metadata["file_type"] == "md"
         assert chunk.metadata["chunker"] == "fixed"
@@ -394,7 +394,7 @@ class TestTransactionality:
         self, storage: Storage, chunker: FixedSizeChunker, embedder: HashingEmbedder
     ) -> None:
         document = make_document("a.md", "content that will fail to index")
-        chunks = chunker.chunk(document)
+        chunks = await chunker.chunk(document)
         with pytest.raises(DimensionMismatchError):
             await storage.index_document(document, chunks, [[0.0, 1.0]], embedder.info)
 
