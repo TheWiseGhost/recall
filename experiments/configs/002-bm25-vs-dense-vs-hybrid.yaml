@@ -1,7 +1,11 @@
-# TODO / FUTURE: this is the target format for `recall experiment`, which is
-# implemented in Milestone 2. Running it today is not supported.
-#
 # Experiment 002 — Is hybrid retrieval worth the complexity?
+#
+#   recall ingest <your corpus>
+#   recall experiment ./experiments/configs/002-bm25-vs-dense-vs-hybrid.yaml
+#
+# The dataset below does not ship with Recall — point `dataset.path` at your own
+# labelled queries. `experiments/datasets/example_tiny.jsonl` will run, but ten
+# synthetic queries over four documents cannot support any conclusion.
 
 name: bm25-vs-dense-vs-hybrid
 
@@ -13,6 +17,8 @@ hypothesis: >
 dataset:
   path: ./experiments/datasets/technical_docs.jsonl
 
+# Not sweep axes — layered over your recall.yaml for every run. Sweeping these
+# would require re-ingesting the corpus per point; see docs/experiments/index.md.
 chunking:
   strategy: fixed
   chunk_size: 512
@@ -31,6 +37,8 @@ retrieval:
 hybrid:
   dense_weight: 0.65
   lexical_weight: 0.35
+  # rrf ignores component scores and fuses on rank alone: BM25 scores and cosine
+  # similarities are not on a comparable scale.
   fusion: rrf
 
 top_k: [5, 10, 20]

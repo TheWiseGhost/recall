@@ -6,10 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Milestone 2 — retrieval research. Still to come: evaluation metrics, benchmark
-datasets, the experiment runner and the report generator.
+Milestone 2 — retrieval research. Every component listed for the milestone is
+implemented. Still outstanding: a curated benchmark dataset, without which the
+harness has nothing worth measuring.
 
 ### Added
+
+**Evaluation**
+- Metrics in `core/evaluation/metrics.py`: Precision@K, Recall@K, HitRate@K, MRR@K, NDCG@K with graded relevance, plus interpolated latency percentiles. Precision counts positions, recall counts distinct items, a repeated key earns NDCG gain only at its first occurrence, and MRR carries its `@K`.
+- Cost estimation that reports `null` rather than `$0` for a model with no known price. Local providers are `0.0`; the three cases are never collapsed.
+- JSONL dataset loading with binary and graded relevance, a required `*.meta.json` sidecar declaring `synthetic` vs `curated`, and a SHA-256 checksum recorded in every result.
+- Label resolution that refuses unresolvable or ambiguous labels by name, instead of silently scoring every metric zero.
+- `ExperimentRunner`: configuration-driven sweeps over retrieval strategy, reranker and `top_k`, writing `config.yaml` (resolved), `results.json`, `metrics.csv` and `report.md` with git commit, dirty flag, dataset checksum, model versions, corpus size, metrics, latency and cost.
+- Report generator producing the quantitative sections only, with caveats attached automatically. Hypothesis and analysis are left for a human.
+- `recall benchmark --baseline`, failing when a metric drops past an absolute threshold. Runs are matched by `run_id`; a changed dataset checksum aborts the comparison.
+- `recall experiment`, `recall report`, `recall benchmark`.
 
 **Chunking**
 - `sentence` chunker: packs whole sentences into token-budgeted windows, with overlap counted in sentences. A sentence longer than `chunk_size` becomes its own oversized chunk rather than being split.
@@ -49,6 +60,10 @@ datasets, the experiment runner and the report generator.
 - `build_context` no longer hardcodes dense retrieval; `build_retriever` resolves the strategy through `retriever_registry` and supplies its dependencies.
 
 ### Known limitations
+- **No benchmark results are published.** The harness is committed and re-runnable, but the only dataset in the repository is ten synthetic queries over four documents.
+- Sweeping chunking or embedding requires a re-ingest and is refused with an explanation rather than silently ignored.
+- Cost covers query-side embedding only; ingestion cost is not attributed to a run.
+- Token counting is an approximation of a subword tokenizer, so cost estimates inherit that approximation.
 - Sentence segmentation is a regex heuristic with an explicit abbreviation list, not a trained model. An abbreviation outside the list ends a sentence early.
 - `hierarchical` embeds both levels, so ingestion cost roughly doubles. Embedding children only becomes possible once parent-child context selection exists.
 - Cross-encoder scores are raw model outputs — not probabilities, and not comparable to cosine similarity or BM25. Only the ordering is meaningful.

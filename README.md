@@ -11,7 +11,7 @@ Recall is research infrastructure, not a chatbot. It exists to make questions li
 
 Every component in the pipeline — connector, chunker, embedder, retriever, reranker, context selector, generator, evaluator — is selected by name from configuration and implements a small protocol. Swapping one is a config change, and adding one is a class plus a line of registration.
 
-> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → **fixed / sentence / semantic / hierarchical** chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → **cross-encoder reranking** → CLI. The evaluation harness — metrics, datasets, experiment runner, report generator — is next. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
+> **Status: v0.1, Milestone 2 in progress.** Local files and PDFs → **fixed / sentence / semantic / hierarchical** chunking → embeddings → PostgreSQL/pgvector → dense, **BM25 and hybrid** search → **cross-encoder reranking** → CLI, with a **configuration-driven experiment harness** — Precision/Recall/HitRate\@K, MRR, NDCG, latency percentiles and cost estimation. See [Roadmap](#roadmap). Nothing here is benchmarked yet, and this README does not claim any numbers.
 
 ---
 
@@ -107,6 +107,9 @@ recall ingest ./docs         # ingest files and PDFs (incremental by default)
 recall search "query"        # search the knowledge base (dense, BM25 or hybrid)
 recall documents list        # browse what has been ingested
 recall documents show <id> --chunks
+recall experiment <config>   # run a configuration-driven sweep
+recall report <id>           # regenerate a report from a completed experiment
+recall benchmark <config> --baseline results.json   # fail on quality regression
 ```
 
 Useful flags:
@@ -238,31 +241,41 @@ The same pattern applies to `connector_registry`, `embedder_registry` and `retri
 
 ## Example experiment
 
-Experiments are configuration-driven and their results are written to disk with the git commit, dataset version and model versions attached, so they can be re-run and compared.
+Experiments are configuration-driven. Results are written to disk with the git commit, dataset checksum and model versions attached, so they can be re-run and compared.
 
 ```yaml
-# experiments/configs/hybrid.yaml
-name: hybrid-vs-dense
+# experiments/configs/002-bm25-vs-dense-vs-hybrid.yaml
+name: bm25-vs-dense-vs-hybrid
 dataset:
   path: ./experiments/datasets/technical_docs.jsonl
-chunking:
-  strategy: fixed
 retrieval:
-  strategies: [dense, bm25, hybrid]
+  strategies: [bm25, dense, hybrid]
+reranking:
+  strategies: [off, cross_encoder]
 top_k: [5, 10, 20]
 ```
 
 ```bash
-recall experiment ./experiments/configs/hybrid.yaml
+recall experiment ./experiments/configs/002-bm25-vs-dense-vs-hybrid.yaml
 ```
 
-**The experiment runner is not implemented yet** — it lands in Milestone 2 together with BM25, hybrid retrieval and the metric suite (Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K). The config format above is the target shape, not a working feature.
+Every list is a sweep dimension — the config above is 18 runs over one index. Each run is written to `experiments/results/<date>-<name>/` as `config.yaml`, `results.json`, `metrics.csv` and `report.md`.
+
+**Metrics**: Precision@K, Recall@K, HitRate@K, MRR@K, NDCG@K with graded relevance; p50/p95/p99 latency broken down by stage; and estimated cost. Precision counts positions while recall counts distinct documents, a repeated document earns NDCG gain only once, and MRR carries its `@K` — the [metric definitions](docs/experiments/index.md#metrics) spell out every choice that moves a number.
+
+**Guardrails.** The dangerous failure here is not a crash, it is zeroes that look like a finding. An empty index is refused, dataset labels that match no ingested document are refused by name, an ambiguous filename match is refused, and failed queries are excluded from the averages rather than scored zero.
+
+`recall report` generates the **quantitative sections only** — tables, provenance, caveats. **Hypothesis** and **Analysis** are left as empty headings for a person. A generated "hybrid improves MRR by 12%" reads as a finding; over ten queries it is noise with a decimal point.
+
+`recall benchmark ... --baseline results.json` exits non-zero when a metric drops past a threshold, so retrieval regressions are a CI failure. A changed dataset checksum aborts the comparison rather than reporting a relabel as a regression.
 
 ---
 
 ## Benchmark results
 
-None yet. Recall v0.1 has no evaluation harness, so there are no numbers to report, and inventing them would defeat the purpose of the project. Milestone 2 adds the metric implementations and a labelled dataset; results published then will state their corpus size, query count, and whether the dataset is synthetic or curated.
+**None.** The harness now exists and is re-runnable — but a harness is not a result. Recall ships no curated dataset, and the only dataset in the repository is ten synthetic queries over four documents, which cannot support any conclusion and is labelled as such in the file, in its metadata, and in every report generated from it.
+
+Publishing numbers from that would be exactly the failure mode this project was built to avoid. When results are published they will state their corpus size, query count, embedding model, and whether the dataset is synthetic or curated — and the config that produced them will be in this repository.
 
 ---
 
@@ -301,7 +314,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 Filesystem and PDF connectors · fixed-size chunking · pluggable embeddings · PostgreSQL/pgvector storage · dense retrieval · metadata filtering · incremental sync · CLI · Docker · unit and integration tests.
 
 **Milestone 2 — Retrieval research (in progress)**
-✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · ✅ cross-encoder reranking · ✅ sentence/semantic/hierarchical chunking · Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · benchmark datasets · the experiment runner and report generator.
+✅ BM25 over PostgreSQL full-text search · ✅ hybrid retrieval with configurable weights · ✅ reciprocal rank fusion · ✅ cross-encoder reranking · ✅ sentence/semantic/hierarchical chunking · ✅ Precision@K, Recall@K, Hit Rate@K, MRR, NDCG@K · ✅ the experiment runner, report generator and regression benchmark · curated benchmark datasets.
 
 **Milestone 3 — Production architecture**
 FastAPI service · Redis + Celery workers · job status tracking and dead-lettering · Prometheus metrics and Grafana dashboards · retries with backoff.

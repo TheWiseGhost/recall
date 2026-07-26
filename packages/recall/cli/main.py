@@ -544,5 +544,262 @@ def documents_show(
         console.print(table)
 
 
+# --- experiments -------------------------------------------------------------
+
+
+def _experiment_summary(result: Any, directory: Path) -> None:
+    from rich.table import Table
+
+    dataset = result.dataset
+    if dataset is not None and dataset.kind != "curated":
+        console.print(
+            f"[yellow]⚠ {dataset.kind} dataset[/yellow] "
+            f"({len(dataset.queries)} queries) — these numbers describe this "
+            "dataset and nothing beyond it."
+        )
+
+    # Metric keys carry their own @k ("precision@5"), but every run has exactly
+    # one k, so the suffix is stripped and k gets its own column. Without this
+    # the table grows a column per (metric, k) pair and every cell outside a
+    # run's own k reads as a score of zero rather than "not measured".
+    def base(name: str) -> str:
+        return name.rsplit("@", 1)[0]
+
+    metric_names = sorted({base(name) for run in result.runs for name in run.metrics})
+    table = Table(
+        title=f"{result.name} — {len(result.runs)} runs",
+        title_justify="left",
+        header_style="bold",
+    )
+    table.add_column("retrieval")
+    table.add_column("reranking")
+    table.add_column("k", justify="right")
+    for name in metric_names:
+        table.add_column(name, justify="right")
+    table.add_column("p50 ms", justify="right")
+
+    for run in result.runs:
+        by_base = {base(name): value for name, value in run.metrics.items()}
+        table.add_row(
+            str(run.parameters.get("retrieval_strategy", "")),
+            str(run.parameters.get("reranking_strategy", "")),
+            str(run.parameters.get("top_k", "")),
+            *[f"{by_base[name]:.4f}" if name in by_base else "—" for name in metric_names],
+            f"{run.latency.get('total_ms', {}).get('p50', 0.0):.1f}",
+        )
+    console.print(table)
+
+    failed = sum(run.failed_queries for run in result.runs)
+    if failed:
+        error_console.print(f"[red]{failed} quer(y/ies) failed[/red]; excluded from the averages.")
+    for note in result.notes:
+        console.print(f"[dim]note: {note}[/dim]")
+    console.print(f"\n[green]written[/green] {directory}")
+    console.print(f"[dim]report: {directory / 'report.md'}[/dim]")
+
+
+@app.command()
+def experiment(
+    config_file: Annotated[Path, typer.Argument(help="Experiment config YAML.")],
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Where to write results.")
+    ] = None,
+) -> None:
+    """Run a configuration-driven experiment sweep and write its results."""
+    from recall.evaluation.config import load_experiment_config
+    from recall.evaluation.runner import ExperimentRunner
+
+    settings = _settings(config)
+    try:
+        experiment_config = load_experiment_config(config_file)
+    except RecallError as exc:
+        fail(str(exc))
+
+    console.print(
+        f"[bold]{experiment_config.name}[/bold]: {experiment_config.run_count} run(s) "
+        f"over {experiment_config.dataset.path}"
+    )
+
+    async def run() -> Any:
+        runner = ExperimentRunner(settings=settings, config=experiment_config)
+        return await runner.run(output_root=output)
+
+    try:
+        result, directory = asyncio.run(run())
+    except RecallError as exc:
+        fail(str(exc))
+    except Exception as exc:
+        fail(f"{type(exc).__name__}: {exc}", hint="Run `recall status` to check the database.")
+
+    _experiment_summary(result, directory)
+
+
+def _resolve_experiment(experiment_id: str, settings: Settings) -> Path:
+    """Find a result directory by experiment id, directory name, or path."""
+    direct = Path(experiment_id).expanduser()
+    if direct.is_dir():
+        return direct
+    if direct.is_file():
+        return direct.parent
+
+    results = Path(settings.experiments_dir) / "results"
+    candidate = results / experiment_id
+    if candidate.is_dir():
+        return candidate
+
+    matches = sorted(
+        (path for path in results.glob(f"*{experiment_id}*") if path.is_dir()),
+        reverse=True,
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        fail(
+            f"{experiment_id!r} matches {len(matches)} experiments.",
+            hint=f"Be more specific: {', '.join(p.name for p in matches[:5])}",
+        )
+    available = sorted((p.name for p in results.glob("*") if p.is_dir()), reverse=True)[:5]
+    fail(
+        f"No experiment matching {experiment_id!r} under {results}.",
+        hint=f"Available: {', '.join(available)}"
+        if available
+        else "Run `recall experiment` first.",
+    )
+
+
+@app.command()
+def report(
+    experiment_id: Annotated[str, typer.Argument(help="Experiment id, directory, or path.")],
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Write here instead of report.md.")
+    ] = None,
+    show: Annotated[bool, typer.Option("--show", help="Print the report to stdout.")] = False,
+) -> None:
+    """Regenerate the Markdown report for a completed experiment."""
+    from recall.core.evaluation.models import ExperimentResult
+    from recall.evaluation.report import render_report
+
+    settings = _settings(config)
+    directory = _resolve_experiment(experiment_id, settings)
+    results_file = directory / "results.json"
+    if not results_file.is_file():
+        fail(f"{results_file} not found — is that a Recall experiment directory?")
+
+    try:
+        result = ExperimentResult.model_validate_json(results_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"Could not read {results_file}: {exc}")
+
+    hypothesis = None
+    config_file = directory / "config.yaml"
+    if config_file.is_file():
+        import yaml
+
+        parsed = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        if isinstance(parsed, dict):
+            hypothesis = parsed.get("hypothesis")
+
+    markdown = render_report(result, hypothesis=hypothesis)
+    destination = output or (directory / "report.md")
+    destination.write_text(markdown, encoding="utf-8")
+
+    if show:
+        console.print(markdown)
+    console.print(f"[green]written[/green] {destination}")
+
+
+@app.command()
+def benchmark(
+    config_file: Annotated[Path, typer.Argument(help="Experiment config YAML.")],
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    baseline: Annotated[
+        Path | None,
+        typer.Option("--baseline", help="A previous run's results.json to compare against."),
+    ] = None,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            min=0.0,
+            max=1.0,
+            help="Absolute metric drop tolerated before failing.",
+        ),
+    ] = 0.02,
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Run an experiment and fail if retrieval quality regressed past a threshold."""
+    from recall.evaluation.benchmark import compare, load_baseline
+    from recall.evaluation.config import load_experiment_config
+    from recall.evaluation.runner import ExperimentRunner
+
+    settings = _settings(config)
+    try:
+        experiment_config = load_experiment_config(config_file)
+        reference = load_baseline(baseline) if baseline else None
+    except RecallError as exc:
+        fail(str(exc))
+
+    async def run() -> Any:
+        runner = ExperimentRunner(settings=settings, config=experiment_config)
+        return await runner.run(output_root=output)
+
+    try:
+        result, directory = asyncio.run(run())
+    except RecallError as exc:
+        fail(str(exc))
+    except Exception as exc:
+        fail(f"{type(exc).__name__}: {exc}", hint="Run `recall status` to check the database.")
+
+    _experiment_summary(result, directory)
+
+    if reference is None:
+        console.print(
+            "\n[yellow]No baseline given[/yellow] — nothing to compare against. "
+            f"Use this run as one:\n  --baseline {directory / 'results.json'}"
+        )
+        return
+
+    try:
+        comparison = compare(result, reference, threshold=threshold)
+    except RecallError as exc:
+        fail(str(exc))
+
+    from rich.table import Table
+
+    if comparison.regressions or comparison.improvements:
+        table = Table(title="vs. baseline", title_justify="left", header_style="bold")
+        table.add_column("run")
+        table.add_column("metric")
+        table.add_column("baseline", justify="right")
+        table.add_column("current", justify="right")
+        table.add_column("delta", justify="right")
+        for delta in [*comparison.regressions, *comparison.improvements]:
+            colour = "red" if delta.delta < 0 else "green"
+            table.add_row(
+                delta.run_id,
+                delta.metric,
+                f"{delta.baseline:.4f}",
+                f"{delta.current:.4f}",
+                f"[{colour}]{delta.delta:+.4f}[/{colour}]",
+            )
+        console.print(table)
+
+    console.print(f"[dim]{comparison.unchanged} metric(s) within ±{threshold:.4f}[/dim]")
+    for run_id in comparison.missing_runs:
+        error_console.print(f"[yellow]missing[/yellow] baseline run {run_id} was not re-run")
+    for run_id in comparison.new_runs:
+        console.print(f"[dim]new run (not in baseline): {run_id}[/dim]")
+
+    if not comparison.passed:
+        error_console.print(
+            f"\n[red]FAILED[/red]: {len(comparison.regressions)} metric(s) dropped "
+            f"by more than {threshold:.4f}."
+        )
+        raise typer.Exit(1)
+    console.print("\n[green]PASSED[/green]: no metric regressed beyond the threshold.")
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()
