@@ -93,8 +93,22 @@ class TestVersionAndComponents:
     def test_connectors_lists_every_registry(self) -> None:
         result = runner.invoke(app, ["connectors"])
         assert result.exit_code == 0
-        for name in ("filesystem", "pdf", "fixed", "hash", "dense"):
-            assert name in result.output
+        for name in (
+            "filesystem",
+            "pdf",
+            "fixed",
+            "sentence",
+            "semantic",
+            "hierarchical",
+            "hash",
+            "dense",
+            "bm25",
+            "hybrid",
+            "rrf",
+            "weighted",
+            "cross_encoder",
+        ):
+            assert name in result.output, name
 
 
 class TestStatus:
@@ -193,3 +207,176 @@ class TestDocuments:
         result = run(project, "documents", "show", "00000000-0000-0000-0000-000000000000")
         assert result.exit_code == 1
         assert "No document" in result.output
+
+
+class TestRetrievalStrategies:
+    """Every strategy must be reachable from the CLI, not just from Python."""
+
+    @pytest.mark.parametrize("strategy", ["dense", "bm25", "hybrid"])
+    def test_search_with_each_strategy(self, project: Path, strategy: str) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+
+        result = run(project, "search", "authentication", "--strategy", strategy, "--json")
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["retrieval_strategy"] == strategy
+        assert payload["results"]
+
+    def test_hybrid_records_component_provenance(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        result = run(project, "search", "authentication", "--strategy", "hybrid", "--json")
+        payload = json.loads(result.stdout)
+        assert payload["results"][0]["component_ranks"]
+
+    def test_unknown_strategy_lists_the_alternatives(self, project: Path) -> None:
+        result = run(project, "search", "q", "--strategy", "telepathy")
+        assert result.exit_code != 0
+        assert "bm25" in result.output
+
+    def test_rerank_off_is_accepted(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        result = run(project, "search", "authentication", "--rerank", "off", "--json")
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["reranked"] is False
+
+    def test_rerank_none_widens_the_candidate_pool(self, project: Path) -> None:
+        """The control condition: pool widens, order is untouched."""
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        result = run(project, "search", "authentication", "--rerank", "none", "--json")
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["reranked"] is True
+        assert payload["reranking_strategy"] == "none"
+        assert payload["candidates"] > payload["top_k"]
+
+    def test_unknown_reranker_is_rejected(self, project: Path) -> None:
+        result = run(project, "search", "q", "--rerank", "telepathy")
+        assert result.exit_code != 0
+        assert "cross_encoder" in result.output
+
+
+class TestExperimentCommands:
+    def write_experiment(self, project: Path) -> Path:
+        dataset = project / "queries.jsonl"
+        dataset.write_text(
+            "\n".join(
+                json.dumps(payload)
+                for payload in (
+                    {
+                        "query": "How does authentication work?",
+                        "relevant_documents": ["authentication.md"],
+                    },
+                    {
+                        "query": "How are bearer tokens verified?",
+                        "relevant_documents": ["authentication.md"],
+                    },
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (project / "queries.meta.json").write_text(
+            json.dumps({"kind": "synthetic", "documents": 1, "label_method": "for the CLI tests"}),
+            encoding="utf-8",
+        )
+        config = project / "exp.yaml"
+        config.write_text(
+            "name: cli-check\n"
+            f"dataset:\n  path: {dataset}\n"
+            "retrieval:\n  strategies: [bm25, dense]\n"
+            "top_k: [3]\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def test_experiment_writes_a_result_directory(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+
+        result = run(project, "experiment", str(config), "--output", str(project / "out"))
+        assert result.exit_code == 0, result.output
+
+        directories = list((project / "out" / "results").glob("*-cli-check"))
+        assert len(directories) == 1
+        for filename in ("config.yaml", "results.json", "metrics.csv", "report.md"):
+            assert (directories[0] / filename).is_file(), filename
+
+    def test_experiment_warns_about_a_synthetic_dataset(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+        result = run(project, "experiment", str(config), "--output", str(project / "out"))
+        assert "synthetic" in result.output
+
+    def test_experiment_on_an_empty_index_fails_clearly(self, project: Path) -> None:
+        config = self.write_experiment(project)
+        result = run(project, "experiment", str(config), "--output", str(project / "out"))
+        assert result.exit_code != 0
+        assert "empty" in result.output
+
+    def test_report_regenerates_from_a_result_directory(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+        run(project, "experiment", str(config), "--output", str(project / "out"))
+        directory = next((project / "out" / "results").glob("*-cli-check"))
+
+        (directory / "report.md").unlink()
+        result = run(project, "report", str(directory))
+        assert result.exit_code == 0, result.output
+        assert (directory / "report.md").is_file()
+        assert "## Analysis" in (directory / "report.md").read_text(encoding="utf-8")
+
+    def test_report_on_a_missing_experiment_fails_clearly(self, project: Path) -> None:
+        result = run(project, "report", "no-such-experiment")
+        assert result.exit_code != 0
+
+    def test_benchmark_passes_against_its_own_baseline(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+        run(project, "experiment", str(config), "--output", str(project / "out"))
+        baseline = next((project / "out" / "results").glob("*-cli-check")) / "results.json"
+
+        result = run(
+            project,
+            "benchmark",
+            str(config),
+            "--baseline",
+            str(baseline),
+            "--output",
+            str(project / "out"),
+        )
+        assert result.exit_code == 0, result.output
+        assert "PASSED" in result.output
+
+    def test_benchmark_fails_on_a_regression(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+        run(project, "experiment", str(config), "--output", str(project / "out"))
+        baseline_path = next((project / "out" / "results").glob("*-cli-check")) / "results.json"
+
+        # Inflate the baseline so the real run looks like a regression.
+        payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+        for run_payload in payload["runs"]:
+            run_payload["metrics"] = {
+                name: min(1.0, value + 0.5) for name, value in run_payload["metrics"].items()
+            }
+        inflated = project / "inflated.json"
+        inflated.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = run(
+            project,
+            "benchmark",
+            str(config),
+            "--baseline",
+            str(inflated),
+            "--output",
+            str(project / "out"),
+        )
+        assert result.exit_code == 1
+        assert "FAILED" in result.output
+
+    def test_benchmark_without_a_baseline_says_how_to_make_one(self, project: Path) -> None:
+        assert run(project, "ingest", str(project / "examples" / "documents")).exit_code == 0
+        config = self.write_experiment(project)
+        result = run(project, "benchmark", str(config), "--output", str(project / "out"))
+        assert result.exit_code == 0
+        assert "--baseline" in result.output
