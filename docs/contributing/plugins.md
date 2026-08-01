@@ -204,8 +204,7 @@ from recall.core.retrieval.fusion import fusion_registry
 class BordaFusion:
     name = "borda"
 
-    def fuse(self, lists, *, top_k: int) -> list[SearchResult]:
-        ...
+    def fuse(self, lists, *, top_k: int) -> list[SearchResult]: ...
 ```
 
 `fuse` receives `{retriever_name: ranked_results}` and returns one ranking. `hybrid.fusion: borda` then selects it.
